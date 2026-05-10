@@ -1,4 +1,4 @@
-use crate::ast::{Program, Stmt, Expr, Literal, Type};
+use crate::ast::{Program, Stmt, Expr, Literal};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
@@ -32,13 +32,12 @@ impl TypeSystem {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::Let { name, value, .. } => {
+            Stmt::Assignment { name, value, .. } => {
                 let val_type = self.check_expr(value)?;
                 self.scopes.last_mut().unwrap().insert(name.clone(), val_type);
                 Ok(())
             },
-            Stmt::Function { name, body, .. } => {
-                // Simplified function check
+            Stmt::FunctionDef { name, body, .. } => {
                 self.scopes.push(HashMap::new());
                 for s in body {
                     self.check_stmt(s)?;
@@ -47,8 +46,8 @@ impl TypeSystem {
                 self.scopes.last_mut().unwrap().insert(name.clone(), HornetType::Void);
                 Ok(())
             },
-            Stmt::If { body, .. } => {
-                for s in body {
+            Stmt::If { then_branch, .. } => {
+                for s in then_branch {
                     self.check_stmt(s)?;
                 }
                 Ok(())
@@ -64,7 +63,6 @@ impl TypeSystem {
                 match lit {
                     Literal::Number(_) => Ok(HornetType::Int),
                     Literal::String(_) => Ok(HornetType::String),
-                    Literal::Bool(_) => Ok(HornetType::Bool),
                 }
             },
             Expr::Identifier(name) => {

@@ -1,6 +1,6 @@
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::type_system::TypeChecker;
+use crate::type_system::TypeSystem;
 use serde_json::json;
 
 pub struct StingerLsp {

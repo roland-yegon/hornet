@@ -1,4 +1,5 @@
 use crate::ast::{Program, Stmt, Expr, Literal};
+use crate::error::HornetError;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
@@ -22,15 +23,23 @@ impl TypeSystem {
             scopes: vec![HashMap::new()],
         }
     }
+}
 
-    pub fn analyze(&mut self, program: &Program) -> Result<(), String> {
+impl Default for TypeSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl TypeSystem {
+    pub fn analyze(&mut self, program: &Program) -> Result<(), HornetError> {
         for stmt in &program.statements {
             self.check_stmt(stmt)?;
         }
         Ok(())
     }
 
-    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), HornetError> {
         match stmt {
             Stmt::Assignment { lhs, value, .. } => {
                 let _val_type = self.check_expr(value)?;
@@ -76,7 +85,7 @@ impl TypeSystem {
         }
     }
 
-    fn check_expr(&mut self, expr: &Expr) -> Result<HornetType, String> {
+    fn check_expr(&mut self, expr: &Expr) -> Result<HornetType, HornetError> {
         match expr {
             Expr::Literal(lit) => {
                 match lit {
@@ -90,7 +99,7 @@ impl TypeSystem {
                         return Ok(t.clone());
                     }
                 }
-                Err(format!("Undefined variable: {}", name))
+                Err(HornetError::Type(format!("Undefined variable: {}", name)))
             },
             Expr::BinaryOp { left, right, .. } => {
                 let _left_type = self.check_expr(left)?;

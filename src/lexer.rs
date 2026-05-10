@@ -1,3 +1,4 @@
+use crate::error::HornetError;
 use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,16 +75,16 @@ impl Lexer {
         Some(char)
     }
 
-    pub fn tokenize(&mut self) -> Vec<Token> {
+    pub fn tokenize(&mut self) -> Result<Vec<Token>, HornetError> {
         let mut tokens = Vec::new();
         while self.pos < self.source.len() {
 
             if self.column == 1 {
-                self.handle_indentation(&mut tokens);
+                self.handle_indentation(&mut tokens)?;
                 if self.pos >= self.source.len() { break; }
             }
 
-            let char = self.peek(0).unwrap();
+            let char = self.peek(0).ok_or_else(|| HornetError::Lexer(format!("Unexpected end of source at line {}, col {}", self.line, self.column)))?;
             if char.is_whitespace() && char != '\n' {
                 self.advance();
                 continue;
@@ -96,23 +97,23 @@ impl Lexer {
             }
 
             if char == '#' {
-                while self.peek(0).is_some() && self.peek(0).unwrap() != '\n' {
+                while self.peek(0).is_some() && self.peek(0) != Some('\n') {
                     self.advance();
                 }
                 continue;
             }
 
             if char.is_ascii_digit() {
-                tokens.push(self.read_number());
+                tokens.push(self.read_number()?);
             } else if char.is_alphabetic() || char == '_' {
                 tokens.push(self.read_identifier());
             } else if char == '"' {
-                tokens.push(self.read_string());
+                tokens.push(self.read_string()?);
             } else {
-                if let Some(token) = self.read_operator() {
+                if let Some(token) = self.read_operator()? {
                     tokens.push(token);
                 } else {
-                    panic!("Unexpected character: {} at line {}, col {}", char, self.line, self.column);
+                    return Err(HornetError::Lexer(format!("Unexpected character: {} at line {}, col {}", char, self.line, self.column)));
                 }
             }
         }
@@ -122,10 +123,10 @@ impl Lexer {
             tokens.push(Token { token_type: TokenType::Dedent, line: self.line, column: self.column });
         }
         tokens.push(Token { token_type: TokenType::Eof, line: self.line, column: self.column });
-        tokens
+        Ok(tokens)
     }
 
-    fn handle_indentation(&mut self, tokens: &mut Vec<Token>) {
+    fn handle_indentation(&mut self, tokens: &mut Vec<Token>) -> Result<(), HornetError> {
         let mut current_indent = 0;
         while let Some(' ') = self.peek(0) {
             current_indent += 1;
@@ -133,28 +134,29 @@ impl Lexer {
         }
 
         if matches!(self.peek(0), Some('\n') | Some('#') | None) {
-            return;
+            return Ok(());
         }
 
-        let last_indent = *self.indent_stack.last().unwrap();
+        let last_indent = *self.indent_stack.last().unwrap_or(&0);
         if current_indent > last_indent {
-            if (current_indent - last_indent) % 4 != 0 {
-                panic!("Indentation error at line {}", self.line);
+            if !(current_indent - last_indent).is_multiple_of(4) {
+                return Err(HornetError::Lexer(format!("Indentation error at line {}", self.line)));
             }
             self.indent_stack.push(current_indent);
             tokens.push(Token { token_type: TokenType::Indent(current_indent), line: self.line, column: self.column });
         } else if current_indent < last_indent {
-            while current_indent < *self.indent_stack.last().unwrap() {
+            while current_indent < *self.indent_stack.last().unwrap_or(&0) {
                 self.indent_stack.pop();
                 tokens.push(Token { token_type: TokenType::Dedent, line: self.line, column: self.column });
             }
-            if current_indent != *self.indent_stack.last().unwrap() {
-                panic!("Inconsistent indentation at line {}", self.line);
+            if current_indent != *self.indent_stack.last().unwrap_or(&0) {
+                return Err(HornetError::Lexer(format!("Inconsistent indentation at line {}", self.line)));
             }
         }
+        Ok(())
     }
 
-    fn read_number(&mut self) -> Token {
+    fn read_number(&mut self) -> Result<Token, HornetError> {
         let mut num_str = String::new();
         let start_col = self.column;
         while let Some(c) = self.peek(0) {
@@ -162,7 +164,9 @@ impl Lexer {
                 num_str.push(self.advance().unwrap());
             } else { break; }
         }
-        Token { token_type: TokenType::Number(num_str.parse().unwrap()), line: self.line, column: start_col }
+
+        let value = num_str.parse::<i64>().map_err(|_| HornetError::Lexer(format!("Invalid number literal '{}' at line {}", num_str, self.line)))?;
+        Ok(Token { token_type: TokenType::Number(value), line: self.line, column: start_col })
     }
 
     fn read_identifier(&mut self) -> Token {
@@ -192,29 +196,32 @@ impl Lexer {
             "and" => TokenType::And,
             "or" => TokenType::Or,
             "not" => TokenType::Not,
-            "None" => TokenType::Identifier("None".to_string()), // Or add None to TokenType
+            "None" => TokenType::Identifier("None".to_string()),
             _ => TokenType::Identifier(ident_str),
         };
         Token { token_type, line: self.line, column: start_col }
     }
 
-    fn read_string(&mut self) -> Token {
+    fn read_string(&mut self) -> Result<Token, HornetError> {
         self.advance(); // "
         let start_col = self.column - 1;
         let mut string_val = String::new();
         while let Some(c) = self.peek(0) {
-            if c == '"' { break; }
+            if c == '"' {
+                self.advance();
+                return Ok(Token { token_type: TokenType::String(string_val), line: self.line, column: start_col });
+            }
             string_val.push(self.advance().unwrap());
         }
-        self.advance(); // "
-        Token { token_type: TokenType::String(string_val), line: self.line, column: start_col }
+
+        Err(HornetError::Lexer(format!("Unterminated string literal at line {}", self.line)))
     }
 
-    fn read_operator(&mut self) -> Option<Token> {
-        let char = self.peek(0)?;
+    fn read_operator(&mut self) -> Result<Option<Token>, HornetError> {
+        let char = self.peek(0).ok_or_else(|| HornetError::Lexer(format!("Unexpected end of source at line {}, col {}", self.line, self.column)))?;
         let start_col = self.column;
 
-        match char {
+        Ok(match char {
             '<' => {
                 self.advance();
                 if self.peek(0) == Some('=') {
@@ -239,7 +246,7 @@ impl Lexer {
                     self.advance();
                     Some(Token { token_type: TokenType::Neq, line: self.line, column: start_col })
                 } else {
-                    panic!("Unexpected character: ! at line {}", self.line);
+                    return Err(HornetError::Lexer(format!("Unexpected character: ! at line {}", self.line)));
                 }
             }
             '=' => {
@@ -281,7 +288,7 @@ impl Lexer {
             '[' => { self.advance(); Some(Token { token_type: TokenType::LBracket, line: self.line, column: start_col }) }
             ']' => { self.advance(); Some(Token { token_type: TokenType::RBracket, line: self.line, column: start_col }) }
             ',' => { self.advance(); Some(Token { token_type: TokenType::Comma, line: self.line, column: start_col }) }
-            _ => None
-        }
+            _ => None,
+        })
     }
 }

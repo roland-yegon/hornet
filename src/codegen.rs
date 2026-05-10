@@ -8,7 +8,15 @@ impl Codegen {
     pub fn new() -> Self {
         Codegen {}
     }
+}
 
+impl Default for Codegen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Codegen {
     pub fn generate(&mut self, program: &Program) -> String {
         let mut ir = String::new();
         ir.push_str("; Hornet Generated LLVM IR\n");

@@ -1,6 +1,7 @@
 pub mod lexer;
 pub mod ast;
 pub mod parser;
+pub mod error;
 pub mod type_system;
 pub mod coari;
 pub mod codegen;

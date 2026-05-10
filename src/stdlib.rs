@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 pub const CORE: &str = r#"
 # Core primitives
 fn print(val): pass

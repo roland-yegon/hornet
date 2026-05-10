@@ -28,13 +28,14 @@ Ensure you have the basic build tools:
 sudo apt update && sudo apt install build-essential libglib2.0-dev
 ```
 
-### 2. Build from Source
+### 2. Build and Install
 ```bash
 git clone https://github.com/roland-yegon/hornet.git
 cd hornet
-cargo build --release
-cp target/release/hornet /usr/local/bin/
+chmod +x install.sh
+./install.sh
 ```
+This will build the compiler and install it to `/usr/local/bin/hornet`, making it available globally.
 
 ## The Hive IDE (Recommended)
 For the best experience, use the [Hornet Hive IDE](https://github.com/roland-yegon/hornet-hive), which provides a standalone GUI and bundles the compiler automatically.

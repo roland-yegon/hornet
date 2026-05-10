@@ -19,8 +19,8 @@ impl Parser {
         }
     }
 
-    fn advance(&mut self) -> &Token {
-        let token = self.peek(0);
+    fn advance(&mut self) -> Token {
+        let token = self.tokens[self.pos].clone();
         self.pos += 1;
         token
     }
@@ -276,7 +276,11 @@ impl Parser {
                 self.consume(TokenType::RParen, "Expected ')'");
                 node = Expr::Call { target: Box::new(node), args };
             } else if self.match_token(&[TokenType::Range, TokenType::RangeExcl]).is_some() {
-                let inclusive = matches!(self.peek(-1).token_type, TokenType::Range);
+                let inclusive = if self.pos > 0 {
+                    matches!(self.tokens[self.pos - 1].token_type, TokenType::Range)
+                } else {
+                    false
+                };
                 let end = self.parse_expression();
                 node = Expr::Range { start: Box::new(node), end: Box::new(end), inclusive };
             } else {

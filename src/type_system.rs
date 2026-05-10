@@ -1,4 +1,5 @@
-use crate::ast::*;
+use crate::ast::{Program, Stmt, Expr};
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

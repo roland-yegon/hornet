@@ -47,8 +47,8 @@ impl Parser {
 
     pub fn parse(&mut self) -> Program {
         let mut statements = Vec::new();
-        while !matches!(self.peek(0).token_type, TokenType.Eof) {
-            if matches!(self.peek(0).token_type, TokenType.Newline) {
+        while !matches!(self.peek(0).token_type, TokenType::Eof) {
+            if matches!(self.peek(0).token_type, TokenType::Newline) {
                 self.advance();
                 continue;
             }
@@ -116,7 +116,7 @@ impl Parser {
         self.consume(TokenType::Newline, "Expected newline");
         self.consume(TokenType::Indent(0), "Expected indent");
         let mut statements = Vec::new();
-        while !matches!(self.peek(0).token_type, TokenType::Dedent | TokenType.Eof) {
+        while !matches!(self.peek(0).token_type, TokenType::Dedent | TokenType::Eof) {
             if matches!(self.peek(0).token_type, TokenType::Newline) {
                 self.advance();
                 continue;
@@ -129,7 +129,7 @@ impl Parser {
 
     fn parse_assignment(&mut self) -> Stmt {
         let name = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected name"); };
-        self.consume(TokenType.Equals, "Expected '='");
+        self.consume(TokenType::Equals, "Expected '='");
         let value = self.parse_expression();
         Stmt::Assignment { name, value }
     }
@@ -137,7 +137,7 @@ impl Parser {
     fn parse_if_stmt(&mut self) -> Stmt {
         self.advance(); // if
         let condition = self.parse_expression();
-        self.consume(TokenType.Colon, "Expected ':'");
+        self.consume(TokenType::Colon, "Expected ':'");
         let then_branch = self.parse_block();
         
         let mut else_ifs = Vec::new();
@@ -145,7 +145,7 @@ impl Parser {
             self.advance(); // else
             self.advance(); // if
             let cond = self.parse_expression();
-            self.consume(TokenType.Colon, "Expected ':'");
+            self.consume(TokenType::Colon, "Expected ':'");
             let branch = self.parse_block();
             else_ifs.push((cond, branch));
         }
@@ -153,7 +153,7 @@ impl Parser {
         let mut else_branch = None;
         if matches!(self.peek(0).token_type, TokenType::Else) {
             self.advance(); // else
-            self.consume(TokenType.Colon, "Expected ':'");
+            self.consume(TokenType::Colon, "Expected ':'");
             else_branch = Some(self.parse_block());
         }
         
@@ -163,9 +163,9 @@ impl Parser {
     fn parse_for_stmt(&mut self) -> Stmt {
         self.advance(); // for
         let iterator = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected name"); };
-        self.consume(TokenType.In, "Expected 'in'");
+        self.consume(TokenType::In, "Expected 'in'");
         let iterable = self.parse_expression(); // Could be range
-        self.consume(TokenType.Colon, "Expected ':'");
+        self.consume(TokenType::Colon, "Expected ':'");
         let body = self.parse_block();
         Stmt::For { iterator, iterable, body }
     }
@@ -273,7 +273,7 @@ impl Parser {
                         args.push(self.parse_expression());
                     }
                 }
-                self.consume(TokenType.RParen, "Expected ')'");
+                self.consume(TokenType::RParen, "Expected ')'");
                 node = Expr::Call { target: Box::new(node), args };
             } else if self.match_token(&[TokenType::Range, TokenType::RangeExcl]).is_some() {
                 let inclusive = matches!(self.peek(-1).token_type, TokenType::Range);

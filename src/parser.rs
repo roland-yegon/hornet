@@ -62,9 +62,35 @@ impl Parser {
             TokenType::Fn => self.parse_function_def(),
             TokenType::If => self.parse_if_stmt(),
             TokenType::For => self.parse_for_stmt(),
+            TokenType::Import => self.parse_import(),
+            TokenType::Struct => self.parse_struct_def(),
             TokenType::Identifier(_) if matches!(self.peek(1).token_type, TokenType::Equals) => self.parse_assignment(),
             _ => Stmt::Expr(self.parse_expression()),
         }
+    }
+
+    fn parse_import(&mut self) -> Stmt {
+        self.advance(); // import
+        let name = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected name"); };
+        Stmt::Import(name)
+    }
+
+    fn parse_struct_def(&mut self) -> Stmt {
+        self.advance(); // struct
+        let name = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected name"); };
+        self.consume(TokenType::Colon, "Expected ':'");
+        self.consume(TokenType::Newline, "Expected newline");
+        self.consume(TokenType::Indent(0), "Expected indent");
+        let mut fields = Vec::new();
+        while !matches!(self.peek(0).token_type, TokenType::Dedent) {
+            let field_name = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected name"); };
+            self.consume(TokenType::Colon, "Expected ':'");
+            let field_type = if let TokenType::Identifier(n) = &self.advance().token_type { n.clone() } else { panic!("Expected type"); };
+            fields.push((field_name, field_type));
+            self.consume(TokenType::Newline, "Expected newline");
+        }
+        self.consume(TokenType::Dedent, "Expected dedent");
+        Stmt::StructDef { name, fields }
     }
 
     fn parse_function_def(&mut self) -> Stmt {

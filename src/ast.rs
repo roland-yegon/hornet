@@ -37,6 +37,11 @@ pub enum Stmt {
         params: Vec<String>,
         body: Vec<Stmt>,
     },
+    StructDef {
+        name: String,
+        fields: Vec<(String, String)>, // (name, type)
+    },
+    Import(String),
     Assignment {
         name: String,
         value: Expr,

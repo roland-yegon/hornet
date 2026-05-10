@@ -1,0 +1,12 @@
+import web
+
+struct User:
+    id: Int
+    name: String
+
+fn handle_request(req):
+    print("Received request for " + req.path)
+    return "Hello from Hornet Web Server!"
+
+print("Starting server on port 8080...")
+web.serve(8080, handle_request)

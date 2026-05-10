@@ -1,0 +1,12 @@
+# Low-level systems data structure
+struct Node:
+    value: Int
+    next: Node
+
+fn create_list(val):
+    return Node(value=val, next=None)
+
+head = create_list(10)
+head.next = create_list(20)
+
+print("Linked List Head: " + head.value.str())

@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 pub enum TokenType {
     // Keywords
     Fn, If, Else, For, While, Match, Import, Const, In,
+    Struct, Async, Await, Pub,
     
     // Literals
     Identifier(String),
@@ -173,15 +174,19 @@ impl Lexer {
 
         let token_type = match ident_str.as_str() {
             "fn" => TokenType::Fn,
-            "if" => TokenType.If,
-            "else" => TokenType.Else,
-            "for" => TokenType.For,
-            "while" => TokenType.While,
-            "match" => TokenType.Match,
-            "import" => TokenType.Import,
-            "const" => TokenType.Const,
-            "in" => TokenType.In,
-            _ => TokenType.Identifier(ident_str),
+            "if" => TokenType::If,
+            "else" => TokenType::Else,
+            "for" => TokenType::For,
+            "while" => TokenType::While,
+            "match" => TokenType::Match,
+            "import" => TokenType::Import,
+            "const" => TokenType::Const,
+            "in" => TokenType::In,
+            "struct" => TokenType::Struct,
+            "async" => TokenType::Async,
+            "await" => TokenType::Await,
+            "pub" => TokenType::Pub,
+            _ => TokenType::Identifier(ident_str),
         };
         Token { token_type, line: self.line, column: start_col }
     }

@@ -74,14 +74,14 @@ impl Lexer {
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         while self.pos < self.source.len() {
-            let char = self.peek(0).unwrap();
+            let _char = self.peek(0).unwrap();
 
             if self.column == 1 {
                 self.handle_indentation(&mut tokens);
                 if self.pos >= self.source.len() { break; }
             }
 
-            let char = self.peek(0).unwrap();
+            let _char = self.peek(0).unwrap();
             if char.is_whitespace() && char != '\n' {
                 self.advance();
                 continue;

@@ -11,7 +11,7 @@ use std::env;
 use std::fs;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::type_system::TypeChecker;
+use crate::type_system::TypeSystem;
 use crate::coari::CoariAnalyzer;
 use crate::codegen::Codegen;
 use crate::lsp::StingerLsp;
@@ -25,29 +25,33 @@ fn main() {
     }
 
     let command = &args[1];
-    let filename = &args[2];
+    let filename = if args.len() > 2 { &args[2] } else { "" };
 
-    let source = fs::read_to_string(filename).expect("Failed to read file");
+    let source = if !filename.is_empty() {
+        fs::read_to_string(filename).expect("Failed to read file")
+    } else {
+        String::new()
+    };
 
     let mut lexer = Lexer::new(&source);
     let tokens = lexer.tokenize();
 
-    let mut parser = Parser::new(tokens);
-    let ast = parser.parse();
-
     match command.as_str() {
         "tokenize" => {
-            let mut lexer = Lexer::new(&source);
-            for token in lexer.tokenize() {
+            for token in tokens {
                 println!("{:?}", token);
             }
         }
         "parse" => {
+            let mut parser = Parser::new(tokens);
+            let ast = parser.parse();
             println!("{}", serde_json::to_string_pretty(&ast).unwrap());
         }
         "check" => {
-            let mut checker = TypeChecker::new();
-            if let Err(e) = checker.check(&ast) {
+            let mut parser = Parser::new(tokens);
+            let ast = parser.parse();
+            let mut checker = TypeSystem::new();
+            if let Err(e) = checker.analyze(&ast) {
                 println!("Type Error: {}", e);
                 return;
             }
@@ -59,8 +63,10 @@ fn main() {
             println!("Check successful.");
         }
         "build" => {
-            let mut checker = TypeChecker::new();
-            checker.check(&ast).unwrap();
+            let mut parser = Parser::new(tokens);
+            let ast = parser.parse();
+            let mut checker = TypeSystem::new();
+            checker.analyze(&ast).unwrap();
             let mut coari = CoariAnalyzer::new();
             coari.analyze(&ast).unwrap();
             let mut gen = Codegen::new();
@@ -69,6 +75,8 @@ fn main() {
             println!("Compiled to {}.ll", filename);
         }
         "run" => {
+            let mut parser = Parser::new(tokens);
+            let _ast = parser.parse();
             println!("Running {}...", filename);
             // In a real implementation, this would build and execute
             println!("Output: Hello, Hornet!");

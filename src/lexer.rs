@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TokenType {
     // Keywords
-    Fn, If, Else, For, While, Match, Import, Const, In,
+    Fn, If, Else, For, While, Match, Import, Const, In, Return, And, Or, Not,
     Struct, Async, Await, Pub,
     
     // Literals
@@ -13,13 +13,16 @@ pub enum TokenType {
     
     // Operators and Punctuation
     Equals, Plus, Minus, Star, Slash, Percent, Colon, Dot,
-    LParen, RParen, LBrace, RBrace,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Arrow,     // =>
     Range,     // ..
     RangeExcl, // ..<
     
     // Comparisons
     EqEq, Neq, Lt, Le, Gt, Ge,
+    
+    // Punctuation
+    Comma,
     
     // Indentation
     Indent(usize),
@@ -185,6 +188,11 @@ impl Lexer {
             "async" => TokenType::Async,
             "await" => TokenType::Await,
             "pub" => TokenType::Pub,
+            "return" => TokenType::Return,
+            "and" => TokenType::And,
+            "or" => TokenType::Or,
+            "not" => TokenType::Not,
+            "None" => TokenType::Identifier("None".to_string()), // Or add None to TokenType
             _ => TokenType::Identifier(ident_str),
         };
         Token { token_type, line: self.line, column: start_col }
@@ -270,6 +278,9 @@ impl Lexer {
             ')' => { self.advance(); Some(Token { token_type: TokenType::RParen, line: self.line, column: start_col }) }
             '{' => { self.advance(); Some(Token { token_type: TokenType::LBrace, line: self.line, column: start_col }) }
             '}' => { self.advance(); Some(Token { token_type: TokenType::RBrace, line: self.line, column: start_col }) }
+            '[' => { self.advance(); Some(Token { token_type: TokenType::LBracket, line: self.line, column: start_col }) }
+            ']' => { self.advance(); Some(Token { token_type: TokenType::RBracket, line: self.line, column: start_col }) }
+            ',' => { self.advance(); Some(Token { token_type: TokenType::Comma, line: self.line, column: start_col }) }
             _ => None
         }
     }

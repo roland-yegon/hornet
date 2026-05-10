@@ -32,9 +32,11 @@ impl TypeSystem {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::Assignment { name, value, .. } => {
-                let val_type = self.check_expr(value)?;
-                self.scopes.last_mut().unwrap().insert(name.clone(), val_type);
+            Stmt::Assignment { lhs, value, .. } => {
+                let _val_type = self.check_expr(value)?;
+                if let Expr::Identifier(name) = lhs {
+                    self.scopes.last_mut().unwrap().insert(name.clone(), _val_type);
+                }
                 Ok(())
             },
             Stmt::FunctionDef { name, body, .. } => {
@@ -60,7 +62,17 @@ impl TypeSystem {
                 }
                 Ok(())
             },
+            Stmt::While { body, .. } => {
+                for s in body {
+                    self.check_stmt(s)?;
+                }
+                Ok(())
+            },
             Stmt::Expr(_) => Ok(()),
+            Stmt::Return(value) => {
+                self.check_expr(value)?;
+                Ok(())
+            }
         }
     }
 
@@ -84,6 +96,25 @@ impl TypeSystem {
                 let _left_type = self.check_expr(left)?;
                 let _right_type = self.check_expr(right)?;
                 Ok(HornetType::Int)
+            },
+            Expr::List(elements) => {
+                for el in elements {
+                    self.check_expr(el)?;
+                }
+                Ok(HornetType::Void) // Should be List type
+            },
+            Expr::NamedArg { value, .. } => self.check_expr(value),
+            Expr::Map(pairs) => {
+                for (k, v) in pairs {
+                    self.check_expr(k)?;
+                    self.check_expr(v)?;
+                }
+                Ok(HornetType::Void)
+            },
+            Expr::IndexAccess { object, index } => {
+                self.check_expr(object)?;
+                self.check_expr(index)?;
+                Ok(HornetType::Void)
             },
             _ => Ok(HornetType::Void),
         }

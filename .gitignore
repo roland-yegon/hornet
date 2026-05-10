@@ -1,1 +1,6 @@
-*.log/
+/target
+**/*.rs.bk
+Cargo.lock
+*.ll
+*.o
+*.out

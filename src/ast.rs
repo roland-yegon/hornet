@@ -22,6 +22,16 @@ pub enum Expr {
         end: Box<Expr>,
         inclusive: bool,
     },
+    List(Vec<Expr>),
+    NamedArg {
+        name: String,
+        value: Box<Expr>,
+    },
+    Map(Vec<(Expr, Expr)>),
+    IndexAccess {
+        object: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,7 +53,7 @@ pub enum Stmt {
     },
     Import(String),
     Assignment {
-        name: String,
+        lhs: Expr,
         value: Expr,
     },
     If {
@@ -57,6 +67,11 @@ pub enum Stmt {
         iterable: Expr,
         body: Vec<Stmt>,
     },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    Return(Expr),
     Expr(Expr),
 }
 

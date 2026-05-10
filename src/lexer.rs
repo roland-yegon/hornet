@@ -74,7 +74,6 @@ impl Lexer {
     pub fn tokenize(&mut self) -> Vec<Token> {
         let mut tokens = Vec::new();
         while self.pos < self.source.len() {
-            let _char = self.peek(0).unwrap();
 
             if self.column == 1 {
                 self.handle_indentation(&mut tokens);

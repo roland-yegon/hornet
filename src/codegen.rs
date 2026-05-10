@@ -34,6 +34,12 @@ impl Codegen {
         format!("%t{}", id)
     }
 
+    fn fresh_label(&mut self, prefix: &str) -> String {
+        let id = self.next_id;
+        self.next_id += 1;
+        format!("{}.{}", prefix, id)
+    }
+
     fn fresh_global(&mut self) -> String {
         let id = self.next_id;
         self.next_id += 1;
@@ -129,6 +135,21 @@ impl Codegen {
                         self.emit_line(format!("  {} = {} {} {}, {}", target, op_ir, left_ty, left_val, right_val));
                         Ok((left_ty, target))
                     }
+                    "and" => {
+                        self.emit_line(format!("  {} = and i64 {}, {}", target, left_val, right_val));
+                        Ok(("i64".to_string(), target))
+                    }
+                    "or" => {
+                        self.emit_line(format!("  {} = or i64 {}, {}", target, left_val, right_val));
+                        Ok(("i64".to_string(), target))
+                    }
+                    "not" => {
+                        let cmp = self.fresh();
+                        self.emit_line(format!("  {} = icmp eq i64 {}, 0", cmp, right_val));
+                        let zext = self.fresh();
+                        self.emit_line(format!("  {} = zext i1 {} to i64", zext, cmp));
+                        Ok(("i64".to_string(), zext))
+                    }
                     "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                         let cmp_op = match op.as_str() {
                             "==" => "eq",
@@ -172,6 +193,90 @@ impl Codegen {
         }
     }
 
+    fn emit_if(&mut self, condition: &Expr, then_branch: &[Stmt], else_ifs: &[(Expr, Vec<Stmt>)], else_branch: &Option<Vec<Stmt>>) -> Result<(), String> {
+        let (_, cond_val) = self.emit_expr(condition)?;
+        let cond_bool = self.fresh();
+        self.emit_line(format!("  {} = icmp ne i64 {}, 0", cond_bool, cond_val));
+
+        let then_label = self.fresh_label("then");
+        let else_label = self.fresh_label("else");
+        let end_label = self.fresh_label("end");
+
+        self.emit_line(format!("  br i1 {}, label %{}, label %{}", cond_bool, then_label, else_label));
+        self.emit_line(format!("{}:", then_label));
+        self.emit_block(then_branch)?;
+        self.emit_line(format!("  br label %{}", end_label));
+
+        self.emit_line(format!("{}:", else_label));
+        if let Some((first_elif_cond, first_elif_body)) = else_ifs.first() {
+            self.emit_if(first_elif_cond, first_elif_body, &else_ifs[1..], else_branch)?;
+        } else if let Some(branch) = else_branch {
+            self.emit_block(branch)?;
+        }
+        self.emit_line(format!("  br label %{}", end_label));
+
+        self.emit_line(format!("{}:", end_label));
+        Ok(())
+    }
+
+    fn emit_while(&mut self, condition: &Expr, body: &[Stmt]) -> Result<(), String> {
+        let loop_label = self.fresh_label("loop");
+        let body_label = self.fresh_label("body");
+        let end_label = self.fresh_label("end");
+
+        self.emit_line(format!("  br label %{}", loop_label));
+        self.emit_line(format!("{}:", loop_label));
+        let (_, cond_val) = self.emit_expr(condition)?;
+        let cond_bool = self.fresh();
+        self.emit_line(format!("  {} = icmp ne i64 {}, 0", cond_bool, cond_val));
+        self.emit_line(format!("  br i1 {}, label %{}, label %{}", cond_bool, body_label, end_label));
+
+        self.emit_line(format!("{}:", body_label));
+        self.emit_block(body)?;
+        self.emit_line(format!("  br label %{}", loop_label));
+
+        self.emit_line(format!("{}:", end_label));
+        Ok(())
+    }
+
+    fn emit_for(&mut self, iterator: &str, iterable: &Expr, body: &[Stmt]) -> Result<(), String> {
+        if let Expr::Range { start, end, inclusive } = iterable {
+            let (start_ty, start_val) = self.emit_expr(start)?;
+            let (end_ty, end_val) = self.emit_expr(end)?;
+            if start_ty != "i64" || end_ty != "i64" {
+                return Err("Range bounds must be integers".to_string());
+            }
+
+            let iter_ptr = self.allocate_local(iterator, "i64");
+            self.emit_line(format!("  store i64 {}, i64* {}", start_val, iter_ptr));
+
+            let loop_label = self.fresh_label("for.loop");
+            let body_label = self.fresh_label("for.body");
+            let end_label = self.fresh_label("for.end");
+
+            self.emit_line(format!("  br label %{}", loop_label));
+            self.emit_line(format!("{}:", loop_label));
+            let iter_val = self.fresh();
+            self.emit_line(format!("  {} = load i64, i64* {}", iter_val, iter_ptr));
+            let cmp_target = self.fresh();
+            let cmp_op = if *inclusive { "sle" } else { "slt" };
+            self.emit_line(format!("  {} = icmp {} i64 {}, {}", cmp_target, cmp_op, iter_val, end_val));
+            self.emit_line(format!("  br i1 {}, label %{}, label %{}", cmp_target, body_label, end_label));
+
+            self.emit_line(format!("{}:", body_label));
+            self.emit_block(body)?;
+            let next_val = self.fresh();
+            self.emit_line(format!("  {} = add i64 {}, 1", next_val, iter_val));
+            self.emit_line(format!("  store i64 {}, i64* {}", next_val, iter_ptr));
+            self.emit_line(format!("  br label %{}", loop_label));
+
+            self.emit_line(format!("{}:", end_label));
+            Ok(())
+        } else {
+            Err("Only range iterables are supported in for loops".to_string())
+        }
+    }
+
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Assignment { lhs, value } => {
@@ -200,14 +305,19 @@ impl Codegen {
                 }
                 Ok(())
             }
+            Stmt::If { condition, then_branch, else_ifs, else_branch } => {
+                self.emit_if(condition, then_branch, else_ifs, else_branch)
+            }
+            Stmt::While { condition, body } => self.emit_while(condition, body),
+            Stmt::For { iterator, iterable, body } => self.emit_for(iterator, iterable, body),
             Stmt::FunctionDef { name, params, body } => {
-                let header = format!("define void @{}({}) {{", name, params.iter().map(|_| "i64".to_string()).collect::<Vec<_>>().join(", "));
+                let param_defs = params.iter().enumerate().map(|(index, _)| format!("i64 %arg{}", index)).collect::<Vec<_>>().join(", ");
+                let header = format!("define void @{}({}) {{", name, param_defs);
                 self.emit_line(header);
                 self.enter_scope();
                 for (index, param) in params.iter().enumerate() {
                     let ptr = self.allocate_local(param, "i64");
-                    let arg_name = format!("%arg{}", index);
-                    self.emit_line(format!("  store i64 {}, i64* {}", arg_name, ptr));
+                    self.emit_line(format!("  store i64 %arg{}, i64* {}", index, ptr));
                 }
                 self.emit_block(body)?;
                 self.emit_line("  ret void");

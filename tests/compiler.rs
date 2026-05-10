@@ -27,6 +27,28 @@ fn main():
 }
 
 #[test]
+fn codegen_supports_if_and_for_control_flow() {
+    let source = r#"
+for i in 1..3:
+    if i == 1:
+        print("first")
+    else:
+        print("other")
+"#;
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().expect("tokenization failed");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().expect("parsing failed");
+    let mut type_system = TypeSystem::new();
+    type_system.analyze(&program).expect("type checking failed");
+    let mut codegen = Codegen::new();
+    let output = codegen.generate(&program);
+    assert!(output.contains("icmp eq"));
+    assert!(output.contains("br i1"));
+    assert!(output.contains("for.loop"));
+}
+
+#[test]
 fn type_system_rejects_invalid_if_conditions() {
     let source = r#"
 if 1:

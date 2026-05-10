@@ -54,6 +54,13 @@ impl TypeSystem {
             },
             Stmt::StructDef { .. } => Ok(()),
             Stmt::Import(_) => Ok(()),
+            Stmt::For { body, .. } => {
+                for s in body {
+                    self.check_stmt(s)?;
+                }
+                Ok(())
+            },
+            Stmt::Expr(_) => Ok(()),
         }
     }
 
@@ -76,7 +83,7 @@ impl TypeSystem {
             Expr::BinaryOp { left, right, .. } => {
                 let _left_type = self.check_expr(left)?;
                 let _right_type = self.check_expr(right)?;
-                Ok(HornetType::Int) // Simplified
+                Ok(HornetType::Int)
             },
             _ => Ok(HornetType::Void),
         }

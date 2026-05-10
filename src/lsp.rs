@@ -23,9 +23,9 @@ impl StingerLsp {
         let tokens = lexer.tokenize();
         let mut parser = Parser::new(tokens);
         let ast = parser.parse();
-        let mut checker = TypeChecker::new();
+        let mut checker = TypeSystem::new();
         
-        match checker.check(&ast) {
+        match checker.analyze(&ast) {
             Ok(_) => json!([]),
             Err(msg) => json!([{
                 "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 10 } },

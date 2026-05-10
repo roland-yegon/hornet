@@ -1,33 +1,29 @@
-use crate::ast::{Program, Stmt, Expr};
+use crate::ast::{Program, Stmt, Expr, Literal, Type};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum Type {
+pub enum HornetType {
     Int,
     Float,
     String,
     Bool,
     Void,
-    Function { params: Vec<Type>, ret: Box<Type> },
-    Unknown,
+    Custom(String),
 }
 
-pub struct TypeChecker {
-    env: HashMap<String, Type>,
+pub struct TypeSystem {
+    scopes: Vec<HashMap<String, HornetType>>,
 }
 
-impl TypeChecker {
+impl TypeSystem {
     pub fn new() -> Self {
-        let mut env = HashMap::new();
-        env.insert("print".to_string(), Type::Function {
-            params: vec![Type::Unknown], // Polymorphic print
-            ret: Box::new(Type::Void),
-        });
-        TypeChecker { env }
+        TypeSystem {
+            scopes: vec![HashMap::new()],
+        }
     }
 
-    pub fn check(&mut self, program: &Program) -> Result<(), String> {
+    pub fn analyze(&mut self, program: &Program) -> Result<(), String> {
         for stmt in &program.statements {
             self.check_stmt(stmt)?;
         }
@@ -36,63 +32,55 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
-            Stmt::Assignment { name, value } => {
-                let val_type = self.infer_expr(value)?;
-                self.env.insert(name.clone(), val_type);
+            Stmt::Let { name, value, .. } => {
+                let val_type = self.check_expr(value)?;
+                self.scopes.last_mut().unwrap().insert(name.clone(), val_type);
                 Ok(())
-            }
-            Stmt::FunctionDef { name, params, body } => {
-                // Simplified: assuming unknown param types for now unless annotated
-                let mut local_env = self.env.clone();
-                for param in params {
-                    local_env.insert(param.clone(), Type::Unknown);
+            },
+            Stmt::Function { name, body, .. } => {
+                // Simplified function check
+                self.scopes.push(HashMap::new());
+                for s in body {
+                    self.check_stmt(s)?;
                 }
-                // Check body with local env...
+                self.scopes.pop();
+                self.scopes.last_mut().unwrap().insert(name.clone(), HornetType::Void);
                 Ok(())
-            }
-            Stmt::If { condition, then_branch, else_ifs, else_branch } => {
-                let cond_type = self.infer_expr(condition)?;
-                if cond_type != Type::Bool && cond_type != Type::Unknown {
-                    return Err(format!("If condition must be bool, found {:?}", cond_type));
+            },
+            Stmt::If { body, .. } => {
+                for s in body {
+                    self.check_stmt(s)?;
                 }
                 Ok(())
-            }
-            Stmt::For { iterator, iterable, body } => {
-                Ok(())
-            }
-            Stmt::Expr(expr) => {
-                self.infer_expr(expr)?;
-                Ok(())
-            }
+            },
+            Stmt::StructDef { .. } => Ok(()),
+            Stmt::Import(_) => Ok(()),
         }
     }
 
-    fn infer_expr(&self, expr: &Expr) -> Result<Type, String> {
+    fn check_expr(&mut self, expr: &Expr) -> Result<HornetType, String> {
         match expr {
-            Expr::Literal(lit) => match lit {
-                Literal::Number(_) => Ok(Type::Int),
-                Literal::String(_) => Ok(Type::String),
+            Expr::Literal(lit) => {
+                match lit {
+                    Literal::Number(_) => Ok(HornetType::Int),
+                    Literal::String(_) => Ok(HornetType::String),
+                    Literal::Bool(_) => Ok(HornetType::Bool),
+                }
             },
             Expr::Identifier(name) => {
-                self.env.get(name).cloned().ok_or(format!("Undefined variable: {}", name))
-            }
-            Expr::BinaryOp { left, op, right } => {
-                let _left_t = self.infer_expr(left)?;
-                let _right_t = self.infer_expr(right)?;
-                // Simplified: assuming numerical ops result in same type
-                Ok(Type::Int)
-            }
-            Expr::Call { target, args } => {
-                let _target_t = self.infer_expr(target)?;
-                for arg in args {
-                    self.infer_expr(arg)?;
+                for scope in self.scopes.iter().rev() {
+                    if let Some(t) = scope.get(name) {
+                        return Ok(t.clone());
+                    }
                 }
-                Ok(Type::Unknown)
-            }
-            Expr::MemberAccess { object: _, member: _ } => {
-                Ok(Type::Unknown)
-            }
-            Expr::Range { .. } => Ok(Type::Unknown),
+                Err(format!("Undefined variable: {}", name))
+            },
+            Expr::BinaryOp { left, right, .. } => {
+                let _left_type = self.check_expr(left)?;
+                let _right_type = self.check_expr(right)?;
+                Ok(HornetType::Int) // Simplified
+            },
+            _ => Ok(HornetType::Void),
         }
     }
 }

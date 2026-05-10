@@ -11,11 +11,12 @@ impl Parser {
         Parser { tokens, pos: 0 }
     }
 
-    fn peek(&self, n: usize) -> &Token {
-        if self.pos + n >= self.tokens.len() {
-            &self.tokens[self.tokens.len() - 1]
+    fn peek(&self, offset: isize) -> Token {
+        let idx = (self.pos as isize + offset) as usize;
+        if idx < self.tokens.len() {
+            self.tokens[idx].clone()
         } else {
-            &self.tokens[self.pos + n]
+            self.tokens.last().unwrap().clone()
         }
     }
 
@@ -25,23 +26,20 @@ impl Parser {
         token
     }
 
-    fn match_token(&mut self, types: &[TokenType]) -> Option<&Token> {
-        for t in types {
-            // We use matches! because TokenType might have associated data
-            // but for simplicity we can compare discriminant if needed.
-            // Here we check if the type matches.
-            if std::mem::discriminant(&self.peek(0).token_type) == std::mem::discriminant(t) {
+    fn match_token(&mut self, types: &[TokenType]) -> Option<Token> {
+        for token_type in types {
+            if std::mem::discriminant(&self.peek(0).token_type) == std::mem::discriminant(token_type) {
                 return Some(self.advance());
             }
         }
         None
     }
 
-    fn consume(&mut self, token_type: TokenType, message: &str) -> &Token {
+    fn consume(&mut self, token_type: TokenType, message: &str) -> Token {
         if std::mem::discriminant(&self.peek(0).token_type) == std::mem::discriminant(&token_type) {
             self.advance()
         } else {
-            panic!("{} at line {}", message, self.peek(0).line);
+            panic!("{}: expected {:?}, got {:?}", message, token_type, self.peek(0).token_type);
         }
     }
 

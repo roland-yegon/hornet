@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Serialize, Deserialize)]
 pub enum TokenType {
     // Keywords
     Fn, If, Else, For, While, Match, Import, Const, In,

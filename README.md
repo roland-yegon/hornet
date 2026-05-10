@@ -6,7 +6,7 @@ Hornet is a systems programming language designed for speed, simplicity, and beg
 
 | Constraint | Requirement | Implementation |
 | :--- | :--- | :--- |
-| **Speed** | C-level performance | LLVM native compilation |
+| **Speed** | C-level performance | LLVM native compilation, Rust-based compiler |
 | **Simplicity** | Python-like syntax | Indentation-based scoping, no semicolons |
 | **Beginner UX** | Humane errors | WHY/FIX error messages, zero-boilerplate |
 

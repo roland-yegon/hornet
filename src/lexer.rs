@@ -80,7 +80,7 @@ impl Lexer {
                 if self.pos >= self.source.len() { break; }
             }
 
-            let _char = self.peek(0).unwrap();
+            let char = self.peek(0).unwrap();
             if char.is_whitespace() && char != '\n' {
                 self.advance();
                 continue;

@@ -1,0 +1,37 @@
+(* Hornet EBNF Grammar *)
+
+program = { statement | function_def } ;
+
+statement = assignment | if_stmt | for_stmt | while_stmt | expr_stmt ;
+
+function_def = "fn" , identifier , "(" , [ param_list ] , ")" , ":" , block ;
+
+block = newline , indent , { statement } , dedent ;
+
+assignment = identifier , "=" , expression ;
+
+if_stmt = "if" , expression , ":" , block , 
+          { "else if" , expression , ":" , block } , 
+          [ "else" , ":" , block ] ;
+
+for_stmt = "for" , identifier , "in" , range_expr , ":" , block ;
+
+range_expr = expression , ( ".." | "..<" ) , expression ;
+
+expression = term , { ( "+" | "-" ) , term } ;
+
+term = factor , { ( "*" | "/" ) , factor } ;
+
+factor = identifier | number | string | "(" , expression , ")" | call ;
+
+call = identifier , "(" , [ arg_list ] , ")" ;
+
+identifier = letter , { letter | digit | "_" } ;
+
+number = digit , { digit } ;
+
+string = '"' , { any_character } , '"' ;
+
+newline = "\n" ;
+indent = "    " ; (* 4 spaces *)
+dedent = "" ; (* Handled by lexer indentation tracking *)

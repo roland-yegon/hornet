@@ -1,0 +1,11 @@
+# Word frequency counter
+import file
+
+content = file.read("input.txt")
+words = content.split(" ")
+
+counts = {}
+for word in words:
+    counts[word] = (counts[word] or 0) + 1
+
+print(counts.str())

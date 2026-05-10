@@ -36,4 +36,28 @@ for i in 1..3:
 - [ ] LLVM IR Emitter
 - [ ] HPI Package Manager
 
+## Installation (Standalone)
+
+To use Hornet in any editor (VS Code, Vim, Emacs, etc.):
+
+1. **Build the Compiler**:
+   ```bash
+   git clone https://github.com/roland-yegon/hornet.git
+   cd hornet
+   cargo build --release
+   cp target/release/hornet /usr/local/bin/
+   ```
+
+2. **Editor Integration (LSP)**:
+   Hornet comes with a built-in Language Server. Configure your editor to use `hornet lsp` as the server for `.hn` files.
+
+   - **VS Code**: Install the `hornet-vscode` extension.
+   - **Vim/NeoVim**: Use `coc.nvim` or `nvim-lspconfig` with the `hornet lsp` command.
+   - **Sublime**: Use the `LSP` package.
+
+---
+
+## The Hive IDE (Recommended for Beginners)
+If you prefer a standalone experience with no configuration, download the [Hornet Hive IDE](https://github.com/roland-yegon/hornet-hive), which comes with the compiler pre-installed.
+
 > "A language that forces you to understand the machine before you can greet the world has failed its most important user — the beginner."

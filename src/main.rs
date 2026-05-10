@@ -5,6 +5,7 @@ mod type_system;
 mod coari;
 mod codegen;
 mod stdlib;
+mod lsp;
 
 use std::env;
 use std::fs;
@@ -13,12 +14,13 @@ use crate::parser::Parser;
 use crate::type_system::TypeChecker;
 use crate::coari::CoariAnalyzer;
 use crate::codegen::Codegen;
+use crate::lsp::StingerLsp;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
+    if args.len() < 3 && (args.len() < 2 || args[1] != "lsp") {
         println!("Usage: hornet <command> <file>");
-        println!("Commands: tokenize, parse, check, build, run");
+        println!("Commands: tokenize, parse, check, build, run, lsp");
         return;
     }
 
@@ -70,6 +72,10 @@ fn main() {
             println!("Running {}...", filename);
             // In a real implementation, this would build and execute
             println!("Output: Hello, Hornet!");
+        }
+        "lsp" => {
+            let lsp = StingerLsp::new();
+            lsp.start();
         }
         _ => println!("Unknown command: {}", command),
     }

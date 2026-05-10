@@ -1,0 +1,21 @@
+{
+  "name": "hornet",
+  "displayName": "Hornet Language Support",
+  "description": "Intelligent IDE support for the Hornet Programming Language",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "hornet",
+      "aliases": ["Hornet", "hornet"],
+      "extensions": [".hn"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "hornet",
+      "scopeName": "source.hn",
+      "path": "./syntaxes/hornet.tmLanguage.json"
+    }]
+  }
+}

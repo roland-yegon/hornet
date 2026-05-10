@@ -1,0 +1,28 @@
+{
+  "scopeName": "source.hn",
+  "patterns": [
+    {
+      "name": "keyword.control.hornet",
+      "match": "\\b(fn|if|else|for|while|match|import|struct|async|await|return|in)\\b"
+    },
+    {
+      "name": "string.quoted.double.hornet",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.hornet", "match": "\\\\." }]
+    },
+    {
+      "name": "constant.numeric.hornet",
+      "match": "\\b\\d+\\b"
+    },
+    {
+      "name": "comment.line.number-sign.hornet",
+      "match": "#.*$"
+    },
+    {
+      "name": "entity.name.function.hornet",
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*(?=\\()"
+    }
+  ],
+  "repository": {}
+}

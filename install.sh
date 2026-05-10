@@ -5,16 +5,29 @@
 
 set -e
 
+OS_TYPE="$(uname)"
+
+echo "🐝 Detecting System: $OS_TYPE"
+
+if [ "$OS_TYPE" == "Darwin" ]; then
+    INSTALL_DIR="/usr/local/bin"
+elif [ "$OS_TYPE" == "Linux" ]; then
+    INSTALL_DIR="/usr/local/bin"
+else
+    echo "❌ This script currently only supports Linux and macOS."
+    echo "For Windows, please follow the manual build instructions in docs/00-installation.md"
+    exit 1
+fi
+
 echo "🐝 Building Hornet Compiler..."
 cargo build --release
 
-echo "🐝 Installing to /usr/local/bin..."
-# Using sudo if necessary, but we'll try to copy directly if we have permissions
-if [ -w /usr/local/bin ]; then
-    cp target/release/hornet /usr/local/bin/hornet
+echo "🐝 Installing to $INSTALL_DIR..."
+if [ -w "$INSTALL_DIR" ]; then
+    cp target/release/hornet "$INSTALL_DIR/hornet"
 else
-    echo "Requires sudo permissions to install to /usr/local/bin"
-    sudo cp target/release/hornet /usr/local/bin/hornet
+    echo "🔒 Requires sudo permissions to install to $INSTALL_DIR"
+    sudo cp target/release/hornet "$INSTALL_DIR/hornet"
 fi
 
 echo "🐝 Verifying installation..."

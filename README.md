@@ -20,22 +20,20 @@ for i in 1..3:
     greet("World " + i.str())
 ```
 
-## Installation (Standalone Compiler)
+## Installation
 
-### 1. Prerequisites (Linux)
-Ensure you have the basic build tools:
-```bash
-sudo apt update && sudo apt install build-essential libglib2.0-dev
-```
+Hornet is cross-platform. For detailed instructions on your specific Operating System or Linux distribution, please see the **[Full Installation Guide](docs/00-installation.md)**.
 
-### 2. Build and Install
+### Quick Start (Linux & macOS)
 ```bash
 git clone https://github.com/roland-yegon/hornet.git
 cd hornet
-chmod +x install.sh
 ./install.sh
 ```
-This will build the compiler and install it to `/usr/local/bin/hornet`, making it available globally.
+
+### Windows
+1. Build with `cargo build --release`.
+2. Add `target/release/hornet.exe` to your PATH.
 
 ## The Hive IDE (Recommended)
 For the best experience, use the [Hornet Hive IDE](https://github.com/roland-yegon/hornet-hive), which provides a standalone GUI and bundles the compiler automatically.

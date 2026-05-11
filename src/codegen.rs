@@ -375,6 +375,10 @@ impl Codegen {
                 // [[PHASE BLOCKED: import codegen not yet implemented]]
                 Ok(())
             }
+            Stmt::Match { .. } => {
+                // [[PHASE BLOCKED: match codegen not yet implemented]]
+                Ok(())
+            }
         }
     }
 

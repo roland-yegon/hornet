@@ -75,6 +75,10 @@ pub enum Stmt {
     Loop {
         body: Vec<Stmt>,
     },
+    Match {
+        value: Expr,
+        arms: Vec<(Expr, Vec<Stmt>)>,
+    },
     Break,
     Continue,
     Return(Expr),

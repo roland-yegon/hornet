@@ -79,6 +79,7 @@ impl Parser {
             TokenType::For => self.parse_for_stmt(),
             TokenType::While => self.parse_while_stmt(),
             TokenType::Loop => self.parse_loop_stmt(),
+            TokenType::Match => self.parse_match_stmt(),
             TokenType::Break => {
                 self.advance();
                 Ok(Stmt::Break)
@@ -229,6 +230,28 @@ impl Parser {
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
         Ok(Stmt::While { condition, body })
+    }
+
+    fn parse_match_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // match
+        let value = self.parse_expression()?;
+        self.consume(TokenType::Colon, "Expected ':'")?;
+        self.consume(TokenType::Newline, "Expected newline")?;
+        self.consume(TokenType::Indent(0), "Expected indent")?;
+        
+        let mut arms = Vec::new();
+        while !matches!(self.peek(0).token_type, TokenType::Dedent) {
+            if matches!(self.peek(0).token_type, TokenType::Newline) {
+                self.advance();
+                continue;
+            }
+            let pattern = self.parse_expression()?;
+            self.consume(TokenType::Colon, "Expected ':'")?;
+            let body = self.parse_block()?;
+            arms.push((pattern, body));
+        }
+        self.consume(TokenType::Dedent, "Expected dedent")?;
+        Ok(Stmt::Match { value, arms })
     }
 
     fn parse_expression(&mut self) -> Result<Expr, HornetError> {

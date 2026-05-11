@@ -201,6 +201,31 @@ impl Interpreter {
                     }
                 }
             }
+            Stmt::Match { value, arms } => {
+                let match_value = self.eval_expr(value)?;
+                for (pattern, body) in arms {
+                    self.env.push_scope();
+                    if self.pattern_matches(&match_value, pattern)? {
+                        for s in body {
+                            match self.exec_stmt(s)? {
+                                ControlFlow::Return(v) => {
+                                    self.env.pop_scope();
+                                    return Ok(ControlFlow::Return(v));
+                                }
+                                cf => {
+                                    self.env.pop_scope();
+                                    return Ok(cf);
+                                }
+                            }
+                        }
+                        self.env.pop_scope();
+                        return Ok(ControlFlow::None);
+                    }
+                    self.env.pop_scope(); // Pop the scope if pattern didn't match
+                }
+                // No pattern matched - this is an error in Hornet (exhaustive matching required)
+                return Err("Match expression did not match any pattern".into());
+            }
             Stmt::Break => Ok(ControlFlow::Break),
             Stmt::Continue => Ok(ControlFlow::Continue),
             Stmt::Return(expr) => {
@@ -507,6 +532,27 @@ impl Interpreter {
             Ok(result)
         } else {
             Err("Not a function".into())
+        }
+    }
+
+    fn pattern_matches(&mut self, value: &Value, pattern: &Expr) -> Result<bool, HornetError> {
+        match pattern {
+            Expr::Literal(lit) => {
+                let pattern_val = match lit {
+                    Literal::Int(n) => Value::Int(*n),
+                    Literal::Float(n) => Value::Float(*n),
+                    Literal::String(s) => Value::Str(s.clone()),
+                    Literal::Bool(b) => Value::Bool(*b),
+                    Literal::Unit => Value::Unit,
+                };
+                Ok(value == &pattern_val)
+            }
+            Expr::Identifier(name) => {
+                // Variable binding pattern - always matches and binds the variable
+                self.env.define(name, value.clone());
+                Ok(true)
+            }
+            _ => Err(format!("Unsupported pattern: {:?}", pattern).into()),
         }
     }
 

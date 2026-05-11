@@ -134,6 +134,15 @@ impl TypeSystem {
             Stmt::Loop { body } => {
                 self.check_stmt_list(body)
             },
+            Stmt::Match { value, arms } => {
+                let _value_type = self.check_expr(value)?;
+                for (pattern, body) in arms {
+                    // For pattern checking, we need special handling
+                    self.check_pattern(pattern)?;
+                    self.check_stmt_list(body)?;
+                }
+                Ok(())
+            }
             Stmt::For { iterator, iterable, body } => {
                 let iterable_type = self.check_expr(iterable)?;
                 if !matches!(iterable_type, HornetType::Int | HornetType::Custom(_)) {
@@ -164,6 +173,18 @@ impl TypeSystem {
             Ok(())
         } else {
             Err(HornetError::Type(format!("{} must be a boolean expression", context)))
+        }
+    }
+
+    fn check_pattern(&mut self, pattern: &Expr) -> Result<(), HornetError> {
+        match pattern {
+            Expr::Literal(_) => Ok(()), // Literals are always valid patterns
+            Expr::Identifier(name) => {
+                // Variable pattern - bind it in the current scope
+                self.current_scope().insert(name.clone(), HornetType::Void); // Type will be inferred
+                Ok(())
+            }
+            _ => Err(HornetError::Type(format!("Unsupported pattern: {:?}", pattern))),
         }
     }
 

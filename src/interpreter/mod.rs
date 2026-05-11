@@ -361,6 +361,12 @@ impl Interpreter {
     }
 
     fn eval_call(&mut self, target: &Expr, args: &[Expr]) -> Result<Value, HornetError> {
+        // Handle method calls: obj.method(args...)
+        if let Expr::MemberAccess { object, member } = target {
+            let obj = self.eval_expr(object)?;
+            return self.eval_method_call(obj, member, args);
+        }
+
         if let Expr::Identifier(name) = target {
             // Handle built-in functions
             match name.as_str() {
@@ -501,6 +507,42 @@ impl Interpreter {
             Ok(result)
         } else {
             Err("Not a function".into())
+        }
+    }
+
+    fn eval_method_call(&mut self, obj: Value, method: &str, args: &[Expr]) -> Result<Value, HornetError> {
+        // Evaluate method arguments
+        let mut arg_values = Vec::new();
+        for arg in args {
+            arg_values.push(self.eval_expr(arg)?);
+        }
+
+        match (obj, method) {
+            (Value::Int(n), "str") => {
+                if !arg_values.is_empty() {
+                    return Err("Int.str() takes no arguments".into());
+                }
+                Ok(Value::Str(n.to_string()))
+            }
+            (Value::Float(f), "str") => {
+                if !arg_values.is_empty() {
+                    return Err("Float.str() takes no arguments".into());
+                }
+                Ok(Value::Str(f.to_string()))
+            }
+            (Value::Bool(b), "str") => {
+                if !arg_values.is_empty() {
+                    return Err("Bool.str() takes no arguments".into());
+                }
+                Ok(Value::Str(if b { "true" } else { "false" }.to_string()))
+            }
+            (Value::Str(s), "str") => {
+                if !arg_values.is_empty() {
+                    return Err("Str.str() takes no arguments".into());
+                }
+                Ok(Value::Str(s))
+            }
+            (obj, method) => Err(format!("Method '{}' not found on type {}", method, type_name(&obj)).into()),
         }
     }
 

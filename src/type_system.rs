@@ -225,20 +225,29 @@ impl TypeSystem {
                 Ok(HornetType::Int)
             }
             Expr::Call { target, args } => {
-                if let Expr::Identifier(name) = &**target {
-                    match name.as_str() {
-                        "print" => {
-                            if args.is_empty() {
-                                Err(HornetError::Type("print requires at least one argument".into()))
-                            } else {
-                                self.check_expr(&args[0])?;
-                                Ok(HornetType::Void)
+                match &**target {
+                    Expr::Identifier(name) => {
+                        match name.as_str() {
+                            "print" => {
+                                if args.is_empty() {
+                                    Err(HornetError::Type("print requires at least one argument".into()))
+                                } else {
+                                    self.check_expr(&args[0])?;
+                                    Ok(HornetType::Void)
+                                }
                             }
+                            _ => Ok(HornetType::Void),
                         }
-                        _ => Ok(HornetType::Void),
                     }
-                } else {
-                    Err(HornetError::Type("Unsupported call target".into()))
+                    Expr::MemberAccess { object, member } => {
+                        // Method call: check the object and return a type based on the method
+                        self.check_expr(object)?;
+                        match member.as_str() {
+                            "str" => Ok(HornetType::String),
+                            _ => Ok(HornetType::Void), // For now, assume methods return void
+                        }
+                    }
+                    _ => Err(HornetError::Type("Unsupported call target".into())),
                 }
             }
             Expr::Range { .. } => Ok(HornetType::Custom("Range".into())),

@@ -10,6 +10,9 @@ pub enum HornetType {
     String,
     Bool,
     Void,
+    Array(Box<HornetType>),
+    Map(Box<HornetType>, Box<HornetType>),
+    Function(Vec<HornetType>, Box<HornetType>),
     Custom(String),
 }
 
@@ -73,13 +76,40 @@ impl TypeSystem {
                     Err(HornetError::Type("Left-hand side of assignment must be an identifier".into()))
                 }
             },
-            Stmt::FunctionDef { name, params, body, return_type: _ } => {
-                self.current_scope().insert(name.clone(), HornetType::Void);
+            Stmt::FunctionDef { name, params, body, return_type } => {
+                // Create function type with parameter types (initially all Void, will be inferred)
+                let param_types = vec![HornetType::Void; params.len()];
+                let return_type = return_type.as_ref().map_or(HornetType::Void, |rt| {
+                    // For now, just handle basic types
+                    match rt.as_str() {
+                        "Int" => HornetType::Int,
+                        "Float" => HornetType::Float,
+                        "String" => HornetType::String,
+                        "Bool" => HornetType::Bool,
+                        "Void" => HornetType::Void,
+                        _ => HornetType::Custom(rt.clone()),
+                    }
+                });
+
+                let func_type = HornetType::Function(param_types, Box::new(return_type.clone()));
+
+                // Add function to current scope
+                self.current_scope().insert(name.clone(), func_type);
+
+                // Create new scope for function body
                 self.scopes.push(HashMap::new());
+
+                // Add parameters to function scope (initially Void, will be refined during inference)
                 for param in params {
-                    self.current_scope().insert(param.clone(), HornetType::Int);
+                    self.current_scope().insert(param.clone(), HornetType::Void);
                 }
+
+                // Check function body
                 self.check_stmt_list(body)?;
+
+                // TODO: Infer actual parameter and return types from usage
+                // For now, we leave them as Void
+
                 self.scopes.pop();
                 Ok(())
             },
@@ -206,45 +236,168 @@ impl TypeSystem {
                 }
             }
             Expr::List(elements) => {
-                for el in elements {
-                    self.check_expr(el)?;
+                if elements.is_empty() {
+                    Ok(HornetType::Array(Box::new(HornetType::Void)))
+                } else {
+                    let first_type = self.check_expr(&elements[0])?;
+                    // Check that all elements have the same type
+                    for el in &elements[1..] {
+                        let el_type = self.check_expr(el)?;
+                        if el_type != first_type {
+                            return Err(HornetError::Type("All array elements must have the same type".into()));
+                        }
+                    }
+                    Ok(HornetType::Array(Box::new(first_type)))
                 }
-                Ok(HornetType::Custom("List".into()))
             }
             Expr::NamedArg { value, .. } => self.check_expr(value),
             Expr::Map(pairs) => {
-                for (k, v) in pairs {
-                    self.check_expr(k)?;
-                    self.check_expr(v)?;
+                if pairs.is_empty() {
+                    Ok(HornetType::Map(Box::new(HornetType::Void), Box::new(HornetType::Void)))
+                } else {
+                    let (first_key, first_val) = &pairs[0];
+                    let key_type = self.check_expr(first_key)?;
+                    let val_type = self.check_expr(first_val)?;
+
+                    // Check that all keys and values have the same types
+                    for (k, v) in &pairs[1..] {
+                        let k_type = self.check_expr(k)?;
+                        let v_type = self.check_expr(v)?;
+                        if k_type != key_type || v_type != val_type {
+                            return Err(HornetError::Type("All map keys and values must have the same types".into()));
+                        }
+                    }
+                    Ok(HornetType::Map(Box::new(key_type), Box::new(val_type)))
                 }
-                Ok(HornetType::Custom("Map".into()))
             }
             Expr::IndexAccess { object, index } => {
-                self.check_expr(object)?;
-                self.check_expr(index)?;
-                Ok(HornetType::Int)
+                let obj_type = self.check_expr(object)?;
+                let index_type = self.check_expr(index)?;
+
+                // Index should be Int
+                if index_type != HornetType::Int {
+                    return Err(HornetError::Type("Index must be an integer".into()));
+                }
+
+                match obj_type {
+                    HornetType::Array(element_type) => Ok(*element_type),
+                    HornetType::Map(_, value_type) => Ok(*value_type),
+                    HornetType::String => Ok(HornetType::String), // String indexing returns String (single char)
+                    _ => Err(HornetError::Type("Cannot index this type".into())),
+                }
             }
             Expr::Call { target, args } => {
                 match &**target {
                     Expr::Identifier(name) => {
                         match name.as_str() {
-                            "print" => {
-                                if args.is_empty() {
-                                    Err(HornetError::Type("print requires at least one argument".into()))
-                                } else {
+                            "print" | "println" => {
+                                for arg in args {
+                                    self.check_expr(arg)?;
+                                }
+                                Ok(HornetType::Void)
+                            }
+                            "str" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("str() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::String)
+                            }
+                            "int" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("int() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::Int)
+                            }
+                            "float" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("float() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::Float)
+                            }
+                            "bool" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("bool() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::Bool)
+                            }
+                            "len" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("len() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::Int)
+                            }
+                            "type_of" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("type_of() takes exactly 1 argument".into()));
+                                }
+                                self.check_expr(&args[0])?;
+                                Ok(HornetType::String)
+                            }
+                            "range" => {
+                                for arg in args {
+                                    self.check_expr(arg)?;
+                                }
+                                Ok(HornetType::Array(Box::new(HornetType::Int)))
+                            }
+                            "input" => {
+                                if args.len() > 1 {
+                                    return Err(HornetError::Type("input() takes at most 1 argument".into()));
+                                }
+                                if !args.is_empty() {
                                     self.check_expr(&args[0])?;
-                                    Ok(HornetType::Void)
+                                }
+                                Ok(HornetType::String)
+                            }
+                            "assert" => {
+                                if args.len() != 1 {
+                                    return Err(HornetError::Type("assert() takes exactly 1 argument".into()));
+                                }
+                                let arg_type = self.check_expr(&args[0])?;
+                                if arg_type != HornetType::Bool {
+                                    return Err(HornetError::Type("assert() requires boolean argument".into()));
+                                }
+                                Ok(HornetType::Void)
+                            }
+                            _ => {
+                                // User-defined function call
+                                let func_type = self.check_expr(target)?;
+                                if let HornetType::Function(param_types, return_type) = func_type {
+                                    if param_types.len() != args.len() {
+                                        return Err(HornetError::Type(format!(
+                                            "Function expects {} arguments, got {}",
+                                            param_types.len(),
+                                            args.len()
+                                        )));
+                                    }
+                                    // Check argument types match parameter types
+                                    for (i, arg) in args.iter().enumerate() {
+                                        let arg_type = self.check_expr(arg)?;
+                                        // For now, skip type checking if param type is Void (uninferred)
+                                        if param_types[i] != HornetType::Void && arg_type != param_types[i] {
+                                            return Err(HornetError::Type(format!(
+                                                "Argument {} type mismatch: expected {:?}, got {:?}",
+                                                i + 1, param_types[i], arg_type
+                                            )));
+                                        }
+                                    }
+                                    Ok(*return_type)
+                                } else {
+                                    Err(HornetError::Type(format!("'{}' is not a function", name)))
                                 }
                             }
-                            _ => Ok(HornetType::Void),
                         }
                     }
                     Expr::MemberAccess { object, member } => {
                         // Method call: check the object and return a type based on the method
-                        self.check_expr(object)?;
+                        let obj_type = self.check_expr(object)?;
                         match member.as_str() {
                             "str" => Ok(HornetType::String),
-                            _ => Ok(HornetType::Void), // For now, assume methods return void
+                            _ => Err(HornetError::Type(format!("Unknown method '{}' on type {:?}", member, obj_type))),
                         }
                     }
                     _ => Err(HornetError::Type("Unsupported call target".into())),

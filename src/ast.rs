@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
     Literal(Literal),
     Identifier(String),
@@ -8,6 +8,10 @@ pub enum Expr {
         left: Box<Expr>,
         op: String,
         right: Box<Expr>,
+    },
+    UnaryOp {
+        op: String,
+        operand: Box<Expr>,
     },
     Call {
         target: Box<Expr>,
@@ -34,24 +38,21 @@ pub enum Expr {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
-    Number(i64),
+    Int(i64),
+    Float(f64),
     String(String),
+    Bool(bool),
+    Unit,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Stmt {
-    FunctionDef {
+    Let {
         name: String,
-        params: Vec<String>,
-        body: Vec<Stmt>,
+        value: Expr,
     },
-    StructDef {
-        name: String,
-        fields: Vec<(String, String)>, // (name, type)
-    },
-    Import(String),
     Assignment {
         lhs: Expr,
         value: Expr,
@@ -71,7 +72,23 @@ pub enum Stmt {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    Loop {
+        body: Vec<Stmt>,
+    },
+    Break,
+    Continue,
     Return(Expr),
+    FunctionDef {
+        name: String,
+        params: Vec<String>,
+        return_type: Option<String>,
+        body: Vec<Stmt>,
+    },
+    StructDef {
+        name: String,
+        fields: Vec<(String, String)>,
+    },
+    Import(String),
     Expr(Expr),
 }
 

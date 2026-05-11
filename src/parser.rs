@@ -78,9 +78,19 @@ impl Parser {
             TokenType::If => self.parse_if_stmt(),
             TokenType::For => self.parse_for_stmt(),
             TokenType::While => self.parse_while_stmt(),
+            TokenType::Loop => self.parse_loop_stmt(),
+            TokenType::Break => {
+                self.advance();
+                Ok(Stmt::Break)
+            }
+            TokenType::Continue => {
+                self.advance();
+                Ok(Stmt::Continue)
+            }
             TokenType::Import => self.parse_import(),
             TokenType::Struct => self.parse_struct_def(),
             TokenType::Return => self.parse_return(),
+            TokenType::Let => self.parse_let_stmt(),
             _ => {
                 let expr = self.parse_expression()?;
                 if matches!(self.peek(0).token_type, TokenType::Equals) {
@@ -92,6 +102,21 @@ impl Parser {
                 }
             }
         }
+    }
+
+    fn parse_let_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // let
+        let name = self.expect_identifier("variable name")?;
+        self.consume(TokenType::Equals, "Expected '='")?;
+        let value = self.parse_expression()?;
+        Ok(Stmt::Let { name, value })
+    }
+
+    fn parse_loop_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // loop
+        self.consume(TokenType::Colon, "Expected ':'")?;
+        let body = self.parse_block()?;
+        Ok(Stmt::Loop { body })
     }
 
     fn parse_import(&mut self) -> Result<Stmt, HornetError> {
@@ -131,7 +156,7 @@ impl Parser {
         let mut params = Vec::new();
         if !matches!(self.peek(0).token_type, TokenType::RParen) {
             params.push(self.expect_identifier("function parameter")?);
-            while matches!(self.peek(0).token_type, TokenType::Colon | TokenType::Comma) {
+            while matches!(self.peek(0).token_type, TokenType::Comma) {
                 self.advance();
                 params.push(self.expect_identifier("function parameter")?);
             }
@@ -139,7 +164,7 @@ impl Parser {
         self.consume(TokenType::RParen, "Expected ')'")?;
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
-        Ok(Stmt::FunctionDef { name, params, body })
+        Ok(Stmt::FunctionDef { name, params, return_type: None, body })
     }
     
     fn parse_return(&mut self) -> Result<Stmt, HornetError> {
@@ -289,10 +314,11 @@ impl Parser {
 
     fn parse_multiplication(&mut self) -> Result<Expr, HornetError> {
         let mut node = self.parse_factor()?;
-        while let Some(tok) = self.match_token(&[TokenType::Star, TokenType::Slash, TokenType::Percent]) {
+        while let Some(tok) = self.match_token(&[TokenType::Star, TokenType::Slash, TokenType::FloorDiv, TokenType::Percent]) {
             let op = match tok.token_type {
                 TokenType::Star => "*".to_string(),
                 TokenType::Slash => "/".to_string(),
+                TokenType::FloorDiv => "//".to_string(),
                 TokenType::Percent => "%".to_string(),
                 _ => unreachable!(),
             };
@@ -306,6 +332,22 @@ impl Parser {
     }
 
     fn parse_factor(&mut self) -> Result<Expr, HornetError> {
+        // Handle unary operators
+        if let Some(_) = self.match_token(&[TokenType::Minus]) {
+            let operand = self.parse_factor()?;
+            return Ok(Expr::UnaryOp {
+                op: "-".to_string(),
+                operand: Box::new(operand),
+            });
+        }
+        if let Some(_) = self.match_token(&[TokenType::Not]) {
+            let operand = self.parse_factor()?;
+            return Ok(Expr::UnaryOp {
+                op: "not".to_string(),
+                operand: Box::new(operand),
+            });
+        }
+
         let mut node = if self.match_token(&[TokenType::LParen]).is_some() {
             let expr = self.parse_expression()?;
             self.consume(TokenType::RParen, "Expected ')'")?;
@@ -313,15 +355,21 @@ impl Parser {
         } else {
             let tok = self.advance();
             match tok.token_type {
-                TokenType::Number(n) => Expr::Literal(Literal::Number(n)),
+                TokenType::Int(n) => Expr::Literal(Literal::Int(n)),
+                TokenType::Float(f) => Expr::Literal(Literal::Float(f)),
                 TokenType::String(s) => Expr::Literal(Literal::String(s)),
+                TokenType::True => Expr::Literal(Literal::Bool(true)),
+                TokenType::False => Expr::Literal(Literal::Bool(false)),
                 TokenType::Identifier(i) => Expr::Identifier(i),
                 TokenType::LBracket => {
                     let mut elements = Vec::new();
                     if !matches!(self.peek(0).token_type, TokenType::RBracket) {
                         elements.push(self.parse_expression()?);
-                        while matches!(self.peek(0).token_type, TokenType::Comma | TokenType::Colon) {
+                        while matches!(self.peek(0).token_type, TokenType::Comma) {
                             self.advance();
+                            if matches!(self.peek(0).token_type, TokenType::RBracket) {
+                                break;
+                            }
                             elements.push(self.parse_expression()?);
                         }
                     }
@@ -335,8 +383,11 @@ impl Parser {
                         self.consume(TokenType::Colon, "Expected ':'")?;
                         let val = self.parse_expression()?;
                         pairs.push((key, val));
-                        while matches!(self.peek(0).token_type, TokenType::Comma | TokenType::Colon) {
+                        while matches!(self.peek(0).token_type, TokenType::Comma) {
                             self.advance();
+                            if matches!(self.peek(0).token_type, TokenType::RBrace) {
+                                break;
+                            }
                             let key = self.parse_expression()?;
                             self.consume(TokenType::Colon, "Expected ':'")?;
                             let val = self.parse_expression()?;
@@ -346,11 +397,6 @@ impl Parser {
                     self.consume(TokenType::RBrace, "Expected '}'")?;
                     Expr::Map(pairs)
                 }
-                TokenType::Not => Expr::BinaryOp {
-                    left: Box::new(Expr::Literal(Literal::Number(0))),
-                    op: "not".to_string(),
-                    right: Box::new(self.parse_factor()?),
-                },
                 other => return Err(HornetError::Parser(format!("Unexpected token {:?} at line {}", other, tok.line))),
             }
         };
@@ -363,8 +409,11 @@ impl Parser {
                 let mut args = Vec::new();
                 if !matches!(self.peek(0).token_type, TokenType::RParen) {
                     args.push(self.parse_arg()?);
-                    while matches!(self.peek(0).token_type, TokenType::Comma | TokenType::Colon) {
+                    while matches!(self.peek(0).token_type, TokenType::Comma) {
                         self.advance();
+                        if matches!(self.peek(0).token_type, TokenType::RParen) {
+                            break;
+                        }
                         args.push(self.parse_arg()?);
                     }
                 }
@@ -376,7 +425,7 @@ impl Parser {
                 node = Expr::IndexAccess { object: Box::new(node), index: Box::new(index) };
             } else if let Some(tok) = self.match_token(&[TokenType::Range, TokenType::RangeExcl]) {
                 let inclusive = matches!(tok.token_type, TokenType::Range);
-                let end = self.parse_expression()?;
+                let end = self.parse_addition()?;
                 node = Expr::Range { start: Box::new(node), end: Box::new(end), inclusive };
             } else {
                 break;

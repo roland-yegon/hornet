@@ -7,3 +7,4 @@ pub mod coari;
 pub mod codegen;
 pub mod stdlib;
 pub mod lsp;
+pub mod interpreter;

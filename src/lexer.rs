@@ -5,15 +5,18 @@ use serde::{Serialize, Deserialize};
 pub enum TokenType {
     // Keywords
     Fn, If, Else, For, While, Match, Import, Const, In, Return, And, Or, Not,
-    Struct, Async, Await, Pub,
+    Struct, Async, Await, Pub, Let, Break, Continue, Loop,
     
     // Literals
     Identifier(String),
-    Number(i64),
+    Int(i64),
+    Float(f64),
     String(String),
+    True,
+    False,
     
     // Operators and Punctuation
-    Equals, Plus, Minus, Star, Slash, Percent, Colon, Dot,
+    Equals, Plus, Minus, Star, Slash, FloorDiv, Percent, Colon, Dot,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Arrow,     // =>
     Range,     // ..
@@ -164,9 +167,21 @@ impl Lexer {
                 num_str.push(self.advance().unwrap());
             } else { break; }
         }
+        
+        // Check for float
+        if self.peek(0) == Some('.') && matches!(self.peek(1), Some(c) if c.is_ascii_digit()) {
+            num_str.push(self.advance().unwrap()); // consume '.'
+            while let Some(c) = self.peek(0) {
+                if c.is_ascii_digit() {
+                    num_str.push(self.advance().unwrap());
+                } else { break; }
+            }
+            let value = num_str.parse::<f64>().map_err(|_| HornetError::Lexer(format!("Invalid float literal '{}' at line {}", num_str, self.line)))?;
+            return Ok(Token { token_type: TokenType::Float(value), line: self.line, column: start_col });
+        }
 
         let value = num_str.parse::<i64>().map_err(|_| HornetError::Lexer(format!("Invalid number literal '{}' at line {}", num_str, self.line)))?;
-        Ok(Token { token_type: TokenType::Number(value), line: self.line, column: start_col })
+        Ok(Token { token_type: TokenType::Int(value), line: self.line, column: start_col })
     }
 
     fn read_identifier(&mut self) -> Token {
@@ -184,19 +199,24 @@ impl Lexer {
             "else" => TokenType::Else,
             "for" => TokenType::For,
             "while" => TokenType::While,
+            "loop" => TokenType::Loop,
             "match" => TokenType::Match,
             "import" => TokenType::Import,
             "const" => TokenType::Const,
+            "let" => TokenType::Let,
             "in" => TokenType::In,
             "struct" => TokenType::Struct,
             "async" => TokenType::Async,
             "await" => TokenType::Await,
             "pub" => TokenType::Pub,
             "return" => TokenType::Return,
+            "break" => TokenType::Break,
+            "continue" => TokenType::Continue,
             "and" => TokenType::And,
             "or" => TokenType::Or,
             "not" => TokenType::Not,
-            "None" => TokenType::Identifier("None".to_string()),
+            "true" => TokenType::True,
+            "false" => TokenType::False,
             _ => TokenType::Identifier(ident_str),
         };
         Token { token_type, line: self.line, column: start_col }
@@ -278,7 +298,15 @@ impl Lexer {
             '+' => { self.advance(); Some(Token { token_type: TokenType::Plus, line: self.line, column: start_col }) }
             '-' => { self.advance(); Some(Token { token_type: TokenType::Minus, line: self.line, column: start_col }) }
             '*' => { self.advance(); Some(Token { token_type: TokenType::Star, line: self.line, column: start_col }) }
-            '/' => { self.advance(); Some(Token { token_type: TokenType::Slash, line: self.line, column: start_col }) }
+            '/' => {
+                self.advance();
+                if self.peek(0) == Some('/') {
+                    self.advance();
+                    Some(Token { token_type: TokenType::FloorDiv, line: self.line, column: start_col })
+                } else {
+                    Some(Token { token_type: TokenType::Slash, line: self.line, column: start_col })
+                }
+            }
             '%' => { self.advance(); Some(Token { token_type: TokenType::Percent, line: self.line, column: start_col }) }
             ':' => { self.advance(); Some(Token { token_type: TokenType::Colon, line: self.line, column: start_col }) }
             '(' => { self.advance(); Some(Token { token_type: TokenType::LParen, line: self.line, column: start_col }) }

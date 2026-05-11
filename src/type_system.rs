@@ -49,16 +49,31 @@ impl TypeSystem {
 
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), HornetError> {
         match stmt {
+            Stmt::Let { name, value } => {
+                let value_type = self.check_expr(value)?;
+                self.current_scope().insert(name.clone(), value_type);
+                Ok(())
+            }
             Stmt::Assignment { lhs, value, .. } => {
                 let value_type = self.check_expr(value)?;
                 if let Expr::Identifier(name) = lhs {
-                    self.current_scope().insert(name.clone(), value_type);
+                    // Check if variable is already defined
+                    if let Some(existing_type) = self.current_scope().get(name) {
+                        if *existing_type != value_type {
+                            return Err(HornetError::Type(format!(
+                                "Type mismatch: variable '{}' has type {:?}, cannot assign type {:?}",
+                                name, existing_type, value_type
+                            )));
+                        }
+                    } else {
+                        self.current_scope().insert(name.clone(), value_type);
+                    }
                     Ok(())
                 } else {
                     Err(HornetError::Type("Left-hand side of assignment must be an identifier".into()))
                 }
             },
-            Stmt::FunctionDef { name, params, body } => {
+            Stmt::FunctionDef { name, params, body, return_type: _ } => {
                 self.current_scope().insert(name.clone(), HornetType::Void);
                 self.scopes.push(HashMap::new());
                 for param in params {
@@ -84,6 +99,11 @@ impl TypeSystem {
             },
             Stmt::StructDef { .. } => Ok(()),
             Stmt::Import(_) => Ok(()),
+            Stmt::Break => Ok(()),
+            Stmt::Continue => Ok(()),
+            Stmt::Loop { body } => {
+                self.check_stmt_list(body)
+            },
             Stmt::For { iterator, iterable, body } => {
                 let iterable_type = self.check_expr(iterable)?;
                 if !matches!(iterable_type, HornetType::Int | HornetType::Custom(_)) {
@@ -120,8 +140,11 @@ impl TypeSystem {
     fn check_expr(&mut self, expr: &Expr) -> Result<HornetType, HornetError> {
         match expr {
             Expr::Literal(lit) => match lit {
-                Literal::Number(_) => Ok(HornetType::Int),
+                Literal::Int(_) => Ok(HornetType::Int),
+                Literal::Float(_) => Ok(HornetType::Float),
                 Literal::String(_) => Ok(HornetType::String),
+                Literal::Bool(_) => Ok(HornetType::Bool),
+                Literal::Unit => Ok(HornetType::Void),
             },
             Expr::Identifier(name) => {
                 for scope in self.scopes.iter().rev() {
@@ -135,11 +158,20 @@ impl TypeSystem {
                 let left_type = self.check_expr(left)?;
                 let right_type = self.check_expr(right)?;
                 match op.as_str() {
-                    "+" | "-" | "*" | "/" | "%" => {
-                        if left_type == HornetType::Int && right_type == HornetType::Int {
-                            Ok(HornetType::Int)
+                    "+" | "-" | "*" | "/" | "%" | "//" => {
+                        if (left_type == HornetType::Int || left_type == HornetType::Float) &&
+                           (right_type == HornetType::Int || right_type == HornetType::Float) {
+                            if op == "/" {
+                                Ok(HornetType::Float) // division always returns float
+                            } else if op == "//" {
+                                Ok(HornetType::Int) // floor division returns int
+                            } else if left_type == HornetType::Float || right_type == HornetType::Float {
+                                Ok(HornetType::Float)
+                            } else {
+                                Ok(HornetType::Int)
+                            }
                         } else {
-                            Err(HornetError::Type("Arithmetic operators require integer operands".into()))
+                            Err(HornetError::Type("Arithmetic operators require numeric operands".into()))
                         }
                     }
                     "==" | "!=" | "<" | ">" | "<=" | ">=" => Ok(HornetType::Bool),
@@ -150,8 +182,27 @@ impl TypeSystem {
                             Err(HornetError::Type("Logical operators require boolean operands".into()))
                         }
                     }
-                    "not" => Ok(HornetType::Bool),
                     _ => Err(HornetError::Type(format!("Unsupported operator: {}", op))),
+                }
+            }
+            Expr::UnaryOp { op, operand } => {
+                let operand_type = self.check_expr(operand)?;
+                match op.as_str() {
+                    "not" => {
+                        if operand_type == HornetType::Bool {
+                            Ok(HornetType::Bool)
+                        } else {
+                            Err(HornetError::Type("not operator requires boolean operand".into()))
+                        }
+                    }
+                    "-" => {
+                        if operand_type == HornetType::Int || operand_type == HornetType::Float {
+                            Ok(operand_type)
+                        } else {
+                            Err(HornetError::Type("Negation requires numeric operand".into()))
+                        }
+                    }
+                    _ => Err(HornetError::Type(format!("Unknown unary operator: {}", op))),
                 }
             }
             Expr::List(elements) => {

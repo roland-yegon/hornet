@@ -108,8 +108,32 @@ impl Codegen {
 
     fn emit_expr(&mut self, expr: &Expr) -> Result<(String, String), String> {
         match expr {
-            Expr::Literal(Literal::Number(value)) => Ok(("i64".to_string(), value.to_string())),
+            Expr::Literal(Literal::Int(value)) => Ok(("i64".to_string(), value.to_string())),
+            Expr::Literal(Literal::Float(value)) => Ok(("double".to_string(), value.to_string())),
             Expr::Literal(Literal::String(value)) => Ok(self.emit_string_literal(value)),
+            Expr::Literal(Literal::Bool(b)) => Ok(("i1".to_string(), if *b { "1" } else { "0" }.to_string())),
+            Expr::Literal(Literal::Unit) => Ok(("void".to_string(), "".to_string())),
+            Expr::UnaryOp { op, operand } => {
+                let (ty, val) = self.emit_expr(operand)?;
+                match op.as_str() {
+                    "-" if ty == "i64" => {
+                        let target = self.fresh();
+                        self.emit_line(format!("  {} = sub i64 0, {}", target, val));
+                        Ok(("i64".to_string(), target))
+                    }
+                    "-" if ty == "double" => {
+                        let target = self.fresh();
+                        self.emit_line(format!("  {} = fneg double {}", target, val));
+                        Ok(("double".to_string(), target))
+                    }
+                    "not" => {
+                        let target = self.fresh();
+                        self.emit_line(format!("  {} = xor i1 {}, 1", target, val));
+                        Ok(("i1".to_string(), target))
+                    }
+                    _ => Err(format!("Unknown unary operator: {}", op)),
+                }
+            }
             Expr::Identifier(name) => {
                 let entry = self.lookup_local(name).ok_or_else(|| format!("Undefined variable: {}", name))?;
                 let ty = entry.0.clone();
@@ -279,6 +303,12 @@ impl Codegen {
 
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
+            Stmt::Let { name, value } => {
+                let (ty, val) = self.emit_expr(value)?;
+                let ptr = self.allocate_local(name, &ty);
+                self.emit_line(format!("  store {} {}, {}* {}", ty, val, ty, ptr));
+                Ok(())
+            }
             Stmt::Assignment { lhs, value } => {
                 if let Expr::Identifier(name) = lhs {
                     let (ty, val) = self.emit_expr(value)?;
@@ -310,7 +340,19 @@ impl Codegen {
             }
             Stmt::While { condition, body } => self.emit_while(condition, body),
             Stmt::For { iterator, iterable, body } => self.emit_for(iterator, iterable, body),
-            Stmt::FunctionDef { name, params, body } => {
+            Stmt::Loop { body } => {
+                // [[PHASE BLOCKED: loop codegen not yet implemented]]
+                self.emit_block(body)
+            }
+            Stmt::Break => {
+                // [[PHASE BLOCKED: break codegen not yet implemented]]
+                Ok(())
+            }
+            Stmt::Continue => {
+                // [[PHASE BLOCKED: continue codegen not yet implemented]]
+                Ok(())
+            }
+            Stmt::FunctionDef { name, params, body, return_type: _ } => {
                 let param_defs = params.iter().enumerate().map(|(index, _)| format!("i64 %arg{}", index)).collect::<Vec<_>>().join(", ");
                 let header = format!("define void @{}({}) {{", name, param_defs);
                 self.emit_line(header);
@@ -325,7 +367,14 @@ impl Codegen {
                 self.emit_line("}");
                 Ok(())
             }
-            _ => Ok(()),
+            Stmt::StructDef { .. } => {
+                // [[PHASE BLOCKED: struct codegen not yet implemented]]
+                Ok(())
+            }
+            Stmt::Import(_) => {
+                // [[PHASE BLOCKED: import codegen not yet implemented]]
+                Ok(())
+            }
         }
     }
 

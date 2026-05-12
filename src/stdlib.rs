@@ -1,42 +1,28 @@
-#![allow(dead_code)]
+use crate::interpreter::{Environment, Value};
 
-pub const CORE: &str = r#"
-# Core primitives
-fn print(val): pass
-fn str(val): pass
-"#;
+/// Register the Hornet built-in functions in the interpreter global scope.
+/// These functions are implemented by the runtime, not by user-defined Hornet code.
+pub fn register_stdlib(env: &mut Environment) {
+    let builtins = [
+        "print",
+        "println",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "len",
+        "type_of",
+        "range",
+        "input",
+        "assert",
+    ];
 
-pub const MATH: &str = r#"
-# Math and Data Science
-struct Matrix:
-    rows: Int
-    cols: Int
-    data: List
-
-fn dot(a: Matrix, b: Matrix):
-    # Linear algebra dot product
-    pass
-"#;
-
-pub const WEB: &str = r#"
-# Web and Networking
-struct Request:
-    method: String
-    path: String
-    headers: Map
-
-fn serve(port: Int, handler: Function):
-    # Start HTTP server
-    pass
-"#;
-
-pub const SYS: &str = r#"
-# Systems Programming
-fn ffi_call(lib: String, func: String, args: List):
-    # Foreign Function Interface
-    pass
-
-fn alloc(size: Int):
-    # Direct memory allocation
-    pass
-"#;
+    for name in builtins {
+        let func = Value::Function {
+            params: Vec::new(),
+            body: Vec::new(),
+            env: Environment::new(),
+        };
+        env.define(name, func);
+    }
+}

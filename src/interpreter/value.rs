@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -9,11 +8,11 @@ pub enum Value {
     Str(String),
     Unit,
     Array(Vec<Value>),
-    Map(HashMap<String, Value>),
+    Map(Vec<(Value, Value)>),
     Function {
         params: Vec<String>,
         body: Vec<crate::ast::Stmt>,
-        env: Environment,
+        env: crate::interpreter::Environment,
     },
 }
 
@@ -21,11 +20,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Int(n) => write!(f, "{}", n),
-            Value::Float(n) => {
-                // Format floats consistently
-                let s = format!("{}", n);
-                write!(f, "{}", s)
-            }
+            Value::Float(n) => write!(f, "{}", n),
             Value::Bool(b) => write!(f, "{}", if *b { "true" } else { "false" }),
             Value::Str(s) => write!(f, "{}", s),
             Value::Unit => write!(f, "()"),
@@ -38,12 +33,10 @@ impl fmt::Display for Value {
                     .iter()
                     .map(|(k, v)| format!("{}: {}", k, v))
                     .collect();
-                items.sort(); // For deterministic output
+                items.sort();
                 write!(f, "{{{}}}", items.join(", "))
             }
-            Value::Function { params, .. } => {
-                write!(f, "<fn({})>", params.join(", "))
-            }
+            Value::Function { params, .. } => write!(f, "<fn({})>", params.join(", ")),
         }
     }
 }
@@ -56,6 +49,8 @@ impl Value {
             Value::Int(0) => false,
             Value::Float(n) if *n == 0.0 => false,
             Value::Str(s) if s.is_empty() => false,
+            Value::Array(a) if a.is_empty() => false,
+            Value::Map(m) if m.is_empty() => false,
             _ => true,
         }
     }
@@ -70,7 +65,7 @@ impl Value {
             Value::Float(n) => Ok(*n as i64),
             Value::Str(s) => s.parse().map_err(|_| format!("Cannot convert '{}' to int", s)),
             Value::Bool(b) => Ok(if *b { 1 } else { 0 }),
-            _ => Err(format!("Cannot convert {:?} to int", self)),
+            _ => Err(format!("Cannot convert {} to int", self)),
         }
     }
 
@@ -80,69 +75,11 @@ impl Value {
             Value::Float(n) => Ok(*n),
             Value::Str(s) => s.parse().map_err(|_| format!("Cannot convert '{}' to float", s)),
             Value::Bool(b) => Ok(if *b { 1.0 } else { 0.0 }),
-            _ => Err(format!("Cannot convert {:?} to float", self)),
+            _ => Err(format!("Cannot convert {} to float", self)),
         }
     }
 
     pub fn to_bool(&self) -> bool {
         self.is_truthy()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Environment {
-    scopes: Vec<HashMap<String, Value>>,
-}
-
-impl Environment {
-    pub fn new() -> Self {
-        Environment {
-            scopes: vec![HashMap::new()],
-        }
-    }
-
-    pub fn push_scope(&mut self) {
-        self.scopes.push(HashMap::new());
-    }
-
-    pub fn pop_scope(&mut self) {
-        if self.scopes.len() > 1 {
-            self.scopes.pop();
-        }
-    }
-
-    pub fn define(&mut self, name: &str, value: Value) {
-        if let Some(scope) = self.scopes.last_mut() {
-            scope.insert(name.to_string(), value);
-        }
-    }
-
-    pub fn get(&self, name: &str) -> Option<Value> {
-        for scope in self.scopes.iter().rev() {
-            if let Some(val) = scope.get(name) {
-                return Some(val.clone());
-            }
-        }
-        None
-    }
-
-    pub fn set(&mut self, name: &str, value: Value) -> bool {
-        for scope in self.scopes.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name.to_string(), value);
-                return true;
-            }
-        }
-        false
-    }
-
-    pub fn bind_param(&mut self, name: &str, value: Value) {
-        self.define(name, value);
-    }
-}
-
-impl Default for Environment {
-    fn default() -> Self {
-        Self::new()
     }
 }

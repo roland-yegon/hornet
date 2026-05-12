@@ -357,8 +357,8 @@ impl Codegen {
                 let header = format!("define void @{}({}) {{", name, param_defs);
                 self.emit_line(header);
                 self.enter_scope();
-                for (index, param) in params.iter().enumerate() {
-                    let ptr = self.allocate_local(param, "i64");
+                for (index, (param_name, _)) in params.iter().enumerate() {
+                    let ptr = self.allocate_local(param_name, "i64");
                     self.emit_line(format!("  store i64 %arg{}, i64* {}", index, ptr));
                 }
                 self.emit_block(body)?;

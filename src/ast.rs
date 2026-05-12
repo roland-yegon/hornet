@@ -84,7 +84,7 @@ pub enum Stmt {
     Return(Expr),
     FunctionDef {
         name: String,
-        params: Vec<String>,
+        params: Vec<(String, Option<String>)>,
         return_type: Option<String>,
         body: Vec<Stmt>,
     },

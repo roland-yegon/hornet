@@ -1,5 +1,5 @@
 use crate::ast::{Program, Stmt, Expr, Literal};
-use crate::error::HornetError;
+use crate::error::{HornetError, HornetDiagnostic};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
@@ -9,11 +9,31 @@ pub enum HornetType {
     Float,
     String,
     Bool,
-    Void,
+    Unit,
     Array(Box<HornetType>),
     Map(Box<HornetType>, Box<HornetType>),
     Function(Vec<HornetType>, Box<HornetType>),
+    Unknown,
+    Never,
     Custom(String),
+}
+
+impl HornetType {
+    fn name(&self) -> &'static str {
+        match self {
+            HornetType::Int => "Int",
+            HornetType::Float => "Float",
+            HornetType::String => "String",
+            HornetType::Bool => "Bool",
+            HornetType::Unit => "Unit",
+            HornetType::Array(_) => "Array",
+            HornetType::Map(_, _) => "Map",
+            HornetType::Function(_, _) => "Function",
+            HornetType::Unknown => "Unknown",
+            HornetType::Never => "Never",
+            HornetType::Custom(_) => "Custom",
+        }
+    }
 }
 
 pub struct TypeSystem {
@@ -28,6 +48,30 @@ impl TypeSystem {
             scopes: vec![HashMap::new()],
             function_signatures: HashMap::new(),
         }
+    }
+
+    fn make_diagnostic(&self, what: String, why: String, fix: Vec<String>, docs: String) -> HornetError {
+        HornetError::Type(HornetDiagnostic {
+            what,
+            why,
+            fix,
+            docs,
+            line: 0,
+            col: 0,
+        })
+    }
+
+    fn type_error(&self, what: &str, why: &str, fix: Vec<String>, docs: &str) -> HornetError {
+        self.make_diagnostic(what.to_string(), why.to_string(), fix, docs.to_string())
+    }
+
+    fn type_error_simple(&self, message: String) -> HornetError {
+        self.make_diagnostic(
+            message.clone(),
+            message.clone(),
+            vec!["Fix the type error or use an explicit annotation.".to_string()],
+            "hornet.dev/errors/type-error".to_string(),
+        )
     }
 }
 
@@ -49,12 +93,23 @@ impl TypeSystem {
     fn collect_function_signatures(&mut self, statements: &[Stmt]) -> Result<(), HornetError> {
         for stmt in statements {
             if let Stmt::FunctionDef { name, params, return_type, body: _ } = stmt {
-                let return_type = return_type.as_ref().map_or(HornetType::Void, |rt| {
+                let return_type = return_type.as_ref().map_or(HornetType::Unknown, |rt| {
                     self.parse_type_name(rt)
                 });
 
-                // For now, all parameters are inferred as Void, will be refined during checking
-                let param_types = vec![HornetType::Void; params.len()];
+                let mut param_types = Vec::new();
+                for (param_name, param_type) in params {
+                    if let Some(type_name) = param_type {
+                        param_types.push(self.parse_type_name(type_name));
+                    } else {
+                        return Err(self.type_error(
+                            "Function parameter types are required",
+                            &format!("Parameter '{}' in function '{}' is missing a type annotation", param_name, name),
+                            vec![format!("Add a type annotation: {}: Int", param_name)],
+                            "hornet.dev/errors/type-annotation",
+                        ));
+                    }
+                }
 
                 self.function_signatures.insert(name.clone(), (param_types, return_type));
             }
@@ -68,7 +123,7 @@ impl TypeSystem {
             "Float" => HornetType::Float,
             "String" => HornetType::String,
             "Bool" => HornetType::Bool,
-            "Void" => HornetType::Void,
+            "Unit" | "Void" => HornetType::Unit,
             _ => HornetType::Custom(type_str.to_string()),
         }
     }
@@ -95,26 +150,27 @@ impl TypeSystem {
                 let value_type = self.check_expr(value)?;
                 if let Expr::Identifier(name) = lhs {
                     // Check if variable is already defined
-                    if let Some(existing_type) = self.current_scope().get(name) {
-                        if *existing_type != value_type {
-                            return Err(HornetError::Type(format!(
+                    let scope = self.current_scope();
+                    if let Some(existing_type) = scope.get(name).cloned() {
+                        if existing_type != value_type {
+                            return Err(self.type_error_simple(format!(
                                 "Type mismatch: variable '{}' has type {:?}, cannot assign type {:?}",
                                 name, existing_type, value_type
                             )));
                         }
                     } else {
-                        self.current_scope().insert(name.clone(), value_type);
+                        scope.insert(name.clone(), value_type);
                     }
                     Ok(())
                 } else {
-                    Err(HornetError::Type("Left-hand side of assignment must be an identifier".into()))
+                    Err(self.type_error_simple("Left-hand side of assignment must be an identifier".into()))
                 }
             },
             Stmt::FunctionDef { name, params, body, return_type: _ } => {
                 // Get the function signature from the first pass
                 let (param_types, return_type) = self.function_signatures.get(name).cloned()
                     .unwrap_or_else(|| {
-                        (vec![HornetType::Void; params.len()], HornetType::Void)
+                        (vec![HornetType::Unknown; params.len()], HornetType::Unknown)
                     });
 
                 // Create function type and add to scope
@@ -125,13 +181,13 @@ impl TypeSystem {
                 self.scopes.push(HashMap::new());
 
                 // Add parameters to function scope
-                for (i, param) in params.iter().enumerate() {
+                for (i, (param_name, _)) in params.iter().enumerate() {
                     let param_type = if i < param_types.len() {
                         param_types[i].clone()
                     } else {
-                        HornetType::Void
+                        HornetType::Unknown
                     };
-                    self.current_scope().insert(param.clone(), param_type);
+                    self.current_scope().insert(param_name.clone(), param_type);
                 }
 
                 // Check function body
@@ -173,7 +229,7 @@ impl TypeSystem {
             Stmt::For { iterator, iterable, body } => {
                 let iterable_type = self.check_expr(iterable)?;
                 if !matches!(iterable_type, HornetType::Int | HornetType::Custom(_)) {
-                    return Err(HornetError::Type("For loop iterable must be a range or collection".into()));
+                    return Err(self.type_error_simple("For loop iterable must be a range or collection".into()));
                 }
                 self.scopes.push(HashMap::new());
                 self.current_scope().insert(iterator.clone(), HornetType::Int);
@@ -199,7 +255,7 @@ impl TypeSystem {
         if matches!(value_type, HornetType::Bool) {
             Ok(())
         } else {
-            Err(HornetError::Type(format!("{} must be a boolean expression", context)))
+            Err(self.type_error_simple(format!("{} must be a boolean expression", context)))
         }
     }
 
@@ -208,10 +264,10 @@ impl TypeSystem {
             Expr::Literal(_) => Ok(()), // Literals are always valid patterns
             Expr::Identifier(name) => {
                 // Variable pattern - bind it in the current scope
-                self.current_scope().insert(name.clone(), HornetType::Void); // Type will be inferred
+                self.current_scope().insert(name.clone(), HornetType::Unknown); // Type will be inferred
                 Ok(())
             }
-            _ => Err(HornetError::Type(format!("Unsupported pattern: {:?}", pattern))),
+            _ => Err(self.type_error_simple(format!("Unsupported pattern: {:?}", pattern))),
         }
     }
 
@@ -222,7 +278,7 @@ impl TypeSystem {
                 Literal::Float(_) => Ok(HornetType::Float),
                 Literal::String(_) => Ok(HornetType::String),
                 Literal::Bool(_) => Ok(HornetType::Bool),
-                Literal::Unit => Ok(HornetType::Void),
+                Literal::Unit => Ok(HornetType::Unit),
             },
             Expr::Identifier(name) => {
                 for scope in self.scopes.iter().rev() {
@@ -230,7 +286,7 @@ impl TypeSystem {
                         return Ok(t.clone());
                     }
                 }
-                Err(HornetError::Type(format!("Undefined variable: {}", name)))
+                Err(self.type_error_simple(format!("Undefined variable: {}", name)))
             }
             Expr::BinaryOp { left, op, right } => {
                 let left_type = self.check_expr(left)?;
@@ -238,12 +294,12 @@ impl TypeSystem {
                 match op.as_str() {
                     "+" | "-" | "*" | "/" | "%" | "//" => {
                         // Check if operands are numeric or Void (untyped)
-                        let left_numeric = matches!(left_type, HornetType::Int | HornetType::Float | HornetType::Void);
-                        let right_numeric = matches!(right_type, HornetType::Int | HornetType::Float | HornetType::Void);
+                        let left_numeric = matches!(left_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
+                        let right_numeric = matches!(right_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
                         
                         if left_numeric && right_numeric {
                             // Type inference for untyped operands
-                            if left_type == HornetType::Void && right_type == HornetType::Void {
+                            if left_type == HornetType::Unknown && right_type == HornetType::Unknown {
                                 Ok(HornetType::Int) // Default to Int for untyped
                             } else if left_type == HornetType::Float || right_type == HornetType::Float {
                                 Ok(if op == "//" { HornetType::Int } else { HornetType::Float })
@@ -255,7 +311,7 @@ impl TypeSystem {
                                 Ok(HornetType::Int)
                             }
                         } else {
-                            Err(HornetError::Type("Arithmetic operators require numeric operands".into()))
+                            Err(self.type_error_simple("Arithmetic operators require numeric operands".into()))
                         }
                     }
                     "==" | "!=" | "<" | ">" | "<=" | ">=" => Ok(HornetType::Bool),
@@ -263,10 +319,10 @@ impl TypeSystem {
                         if left_type == HornetType::Bool && right_type == HornetType::Bool {
                             Ok(HornetType::Bool)
                         } else {
-                            Err(HornetError::Type("Logical operators require boolean operands".into()))
+                            Err(self.type_error_simple("Logical operators require boolean operands".into()))
                         }
                     }
-                    _ => Err(HornetError::Type(format!("Unsupported operator: {}", op))),
+                    _ => Err(self.type_error_simple(format!("Unsupported operator: {}", op))),
                 }
             }
             Expr::UnaryOp { op, operand } => {
@@ -276,38 +332,52 @@ impl TypeSystem {
                         if operand_type == HornetType::Bool {
                             Ok(HornetType::Bool)
                         } else {
-                            Err(HornetError::Type("not operator requires boolean operand".into()))
+                            Err(self.type_error_simple("not operator requires boolean operand".into()))
                         }
                     }
                     "-" => {
                         if operand_type == HornetType::Int || operand_type == HornetType::Float {
                             Ok(operand_type)
                         } else {
-                            Err(HornetError::Type("Negation requires numeric operand".into()))
+                            Err(self.type_error_simple("Negation requires numeric operand".into()))
                         }
                     }
-                    _ => Err(HornetError::Type(format!("Unknown unary operator: {}", op))),
+                    _ => Err(self.type_error_simple(format!("Unknown unary operator: {}", op))),
                 }
             }
             Expr::List(elements) => {
                 if elements.is_empty() {
-                    Ok(HornetType::Array(Box::new(HornetType::Void)))
-                } else {
-                    let first_type = self.check_expr(&elements[0])?;
-                    // Check that all elements have the same type
-                    for el in &elements[1..] {
-                        let el_type = self.check_expr(el)?;
-                        if el_type != first_type {
-                            return Err(HornetError::Type("All array elements must have the same type".into()));
-                        }
-                    }
-                    Ok(HornetType::Array(Box::new(first_type)))
+                    return Err(self.type_error(
+                        "Cannot infer type for empty array",
+                        "Empty arrays must include a type annotation so the element type can be inferred.",
+                        vec!["Use a typed binding or populate the array with a literal value.".to_string()],
+                        "hornet.dev/errors/empty-array-inference",
+                    ));
                 }
+                let first_type = self.check_expr(&elements[0])?;
+                // Check that all elements have the same type
+                for el in &elements[1..] {
+                    let el_type = self.check_expr(el)?;
+                    if el_type != first_type {
+                        return Err(self.type_error(
+                            "All array elements must have the same type",
+                            "Array literals must be homogeneous in Hornet.",
+                            vec!["Use values of the same type inside the array.".to_string()],
+                            "hornet.dev/errors/array-homogeneity",
+                        ));
+                    }
+                }
+                Ok(HornetType::Array(Box::new(first_type)))
             }
             Expr::NamedArg { value, .. } => self.check_expr(value),
             Expr::Map(pairs) => {
                 if pairs.is_empty() {
-                    Ok(HornetType::Map(Box::new(HornetType::Void), Box::new(HornetType::Void)))
+                    return Err(self.type_error(
+                        "Cannot infer type for empty map",
+                        "Empty maps must include a type annotation so the key and value types can be inferred.",
+                        vec!["Use a typed binding or add a literal key/value pair.".to_string()],
+                        "hornet.dev/errors/empty-map-inference",
+                    ));
                 } else {
                     let (first_key, first_val) = &pairs[0];
                     let key_type = self.check_expr(first_key)?;
@@ -318,7 +388,7 @@ impl TypeSystem {
                         let k_type = self.check_expr(k)?;
                         let v_type = self.check_expr(v)?;
                         if k_type != key_type || v_type != val_type {
-                            return Err(HornetError::Type("All map keys and values must have the same types".into()));
+                            return Err(self.type_error_simple("All map keys and values must have the same types".into()));
                         }
                     }
                     Ok(HornetType::Map(Box::new(key_type), Box::new(val_type)))
@@ -330,14 +400,14 @@ impl TypeSystem {
 
                 // Index should be Int
                 if index_type != HornetType::Int {
-                    return Err(HornetError::Type("Index must be an integer".into()));
+                    return Err(self.type_error_simple("Index must be an integer".into()));
                 }
 
                 match obj_type {
                     HornetType::Array(element_type) => Ok(*element_type),
                     HornetType::Map(_, value_type) => Ok(*value_type),
                     HornetType::String => Ok(HornetType::String), // String indexing returns String (single char)
-                    _ => Err(HornetError::Type("Cannot index this type".into())),
+                    _ => Err(self.type_error_simple("Cannot index this type".into())),
                 }
             }
             Expr::Call { target, args } => {
@@ -348,46 +418,46 @@ impl TypeSystem {
                                 for arg in args {
                                     self.check_expr(arg)?;
                                 }
-                                Ok(HornetType::Void)
+                                Ok(HornetType::Unit)
                             }
                             "str" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("str() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("str() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::String)
                             }
                             "int" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("int() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("int() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::Int)
                             }
                             "float" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("float() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("float() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::Float)
                             }
                             "bool" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("bool() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("bool() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::Bool)
                             }
                             "len" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("len() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("len() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::Int)
                             }
                             "type_of" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("type_of() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("type_of() takes exactly 1 argument".into()));
                                 }
                                 self.check_expr(&args[0])?;
                                 Ok(HornetType::String)
@@ -400,7 +470,7 @@ impl TypeSystem {
                             }
                             "input" => {
                                 if args.len() > 1 {
-                                    return Err(HornetError::Type("input() takes at most 1 argument".into()));
+                                    return Err(self.type_error_simple("input() takes at most 1 argument".into()));
                                 }
                                 if !args.is_empty() {
                                     self.check_expr(&args[0])?;
@@ -409,20 +479,20 @@ impl TypeSystem {
                             }
                             "assert" => {
                                 if args.len() != 1 {
-                                    return Err(HornetError::Type("assert() takes exactly 1 argument".into()));
+                                    return Err(self.type_error_simple("assert() takes exactly 1 argument".into()));
                                 }
                                 let arg_type = self.check_expr(&args[0])?;
                                 if arg_type != HornetType::Bool {
-                                    return Err(HornetError::Type("assert() requires boolean argument".into()));
+                                    return Err(self.type_error_simple("assert() requires boolean argument".into()));
                                 }
-                                Ok(HornetType::Void)
+                                Ok(HornetType::Unit)
                             }
                             _ => {
                                 // User-defined function call
                                 let func_type = self.check_expr(target)?;
                                 if let HornetType::Function(param_types, return_type) = func_type {
                                     if param_types.len() != args.len() {
-                                        return Err(HornetError::Type(format!(
+                                        return Err(self.type_error_simple(format!(
                                             "Function expects {} arguments, got {}",
                                             param_types.len(),
                                             args.len()
@@ -431,9 +501,9 @@ impl TypeSystem {
                                     // Check argument types match parameter types
                                     for (i, arg) in args.iter().enumerate() {
                                         let arg_type = self.check_expr(arg)?;
-                                        // For now, skip type checking if param type is Void (uninferred)
-                                        if param_types[i] != HornetType::Void && arg_type != param_types[i] {
-                                            return Err(HornetError::Type(format!(
+                                        // For now, skip type checking if param type is Unknown (uninferred)
+                                        if param_types[i] != HornetType::Unknown && arg_type != param_types[i] {
+                                            return Err(self.type_error_simple(format!(
                                                 "Argument {} type mismatch: expected {:?}, got {:?}",
                                                 i + 1, param_types[i], arg_type
                                             )));
@@ -441,7 +511,7 @@ impl TypeSystem {
                                     }
                                     Ok(*return_type)
                                 } else {
-                                    Err(HornetError::Type(format!("'{}' is not a function", name)))
+                                    Err(self.type_error_simple(format!("'{}' is not a function", name)))
                                 }
                             }
                         }
@@ -451,10 +521,10 @@ impl TypeSystem {
                         let obj_type = self.check_expr(object)?;
                         match member.as_str() {
                             "str" => Ok(HornetType::String),
-                            _ => Err(HornetError::Type(format!("Unknown method '{}' on type {:?}", member, obj_type))),
+                            _ => Err(self.type_error_simple(format!("Unknown method '{}' on type {:?}", member, obj_type))),
                         }
                     }
-                    _ => Err(HornetError::Type("Unsupported call target".into())),
+                    _ => Err(self.type_error_simple("Unsupported call target".into())),
                 }
             }
             Expr::Range { .. } => Ok(HornetType::Custom("Range".into())),

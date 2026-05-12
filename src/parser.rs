@@ -156,10 +156,10 @@ impl Parser {
         self.consume(TokenType::LParen, "Expected '('")?;
         let mut params = Vec::new();
         if !matches!(self.peek(0).token_type, TokenType::RParen) {
-            params.push(self.expect_identifier("function parameter")?);
+            params.push(self.parse_function_param()?);
             while matches!(self.peek(0).token_type, TokenType::Comma) {
                 self.advance();
-                params.push(self.expect_identifier("function parameter")?);
+                params.push(self.parse_function_param()?);
             }
         }
         self.consume(TokenType::RParen, "Expected ')'")?;
@@ -174,6 +174,16 @@ impl Parser {
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
         Ok(Stmt::FunctionDef { name, params, return_type, body })
+    }
+
+    fn parse_function_param(&mut self) -> Result<(String, Option<String>), HornetError> {
+        let name = self.expect_identifier("function parameter")?;
+        let param_type = if self.match_token(&[TokenType::Colon]).is_some() {
+            Some(self.expect_identifier("parameter type")?)
+        } else {
+            None
+        };
+        Ok((name, param_type))
     }
     
     fn parse_return(&mut self) -> Result<Stmt, HornetError> {

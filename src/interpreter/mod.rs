@@ -1,9 +1,11 @@
 pub mod value;
-pub use value::{Value, Environment};
+pub mod env;
+pub use value::Value;
+pub use env::Environment;
 
 use crate::ast::{Program, Stmt, Expr, Literal};
 use crate::error::HornetError;
-use std::collections::HashMap;
+use crate::stdlib;
 
 pub struct Interpreter {
     env: Environment,
@@ -27,8 +29,7 @@ impl Interpreter {
     }
 
     fn init_stdlib(&mut self) {
-        // Stdlib functions are called via the evaluator, not stored
-        // They're handled in eval_call()
+        stdlib::register_stdlib(&mut self.env);
     }
 
     pub fn run(&mut self, program: &Program) -> Result<(), HornetError> {
@@ -40,7 +41,7 @@ impl Interpreter {
         }
         
         // Look for main() function and call it if it exists
-        if let Some(Value::Function { params, body, env }) = self.env.get("main") {
+        if let Some(Value::Function { params, body, env }) = self.env.get("main").cloned() {
             if !params.is_empty() {
                 return Err("main() should take no parameters".into());
             }
@@ -233,8 +234,9 @@ impl Interpreter {
                 Ok(ControlFlow::Return(val))
             }
             Stmt::FunctionDef { name, params, return_type: _, body } => {
+                let param_names = params.iter().map(|(name, _)| name.clone()).collect();
                 let func = Value::Function {
-                    params: params.clone(),
+                    params: param_names,
                     body: body.clone(),
                     env: self.env.clone(),
                 };
@@ -268,6 +270,7 @@ impl Interpreter {
             Expr::Identifier(name) => {
                 self.env
                     .get(name)
+                    .cloned()
                     .ok_or_else(|| format!("Undefined variable: {}", name).into())
             }
             Expr::BinaryOp { left, op, right } => {
@@ -293,11 +296,11 @@ impl Interpreter {
                 Ok(Value::Array(vals?))
             }
             Expr::Map(pairs) => {
-                let mut map = HashMap::new();
+                let mut map = Vec::new();
                 for (k, v) in pairs {
-                    let key = self.eval_expr(k)?.to_string_value();
+                    let key = self.eval_expr(k)?;
                     let val = self.eval_expr(v)?;
-                    map.insert(key, val);
+                    map.push((key, val));
                 }
                 Ok(Value::Map(map))
             }
@@ -312,10 +315,13 @@ impl Interpreter {
                             .ok_or_else(|| "Index out of bounds".into())
                     }
                     Value::Map(map) => {
-                        let key = idx.to_string_value();
-                        map.get(&key)
-                            .cloned()
-                            .ok_or_else(|| format!("Key not found: {}", key).into())
+                        let key = idx;
+                        for (entry_key, entry_val) in map {
+                            if entry_key == key {
+                                return Ok(entry_val.clone());
+                            }
+                        }
+                        Err("Key not found".into())
                     }
                     Value::Str(s) => {
                         let i = idx.to_int()? as usize;
@@ -548,6 +554,9 @@ impl Interpreter {
                 Ok(value == &pattern_val)
             }
             Expr::Identifier(name) => {
+                if name == "_" {
+                    return Ok(true);
+                }
                 // Variable binding pattern - always matches and binds the variable
                 self.env.define(name, value.clone());
                 Ok(true)

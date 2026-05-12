@@ -163,9 +163,17 @@ impl Parser {
             }
         }
         self.consume(TokenType::RParen, "Expected ')'")?;
+
+        // Check for return type annotation: -> Type
+        let return_type = if self.match_token(&[TokenType::RArrow]).is_some() {
+            Some(self.expect_identifier("return type")?)
+        } else {
+            None
+        };
+
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
-        Ok(Stmt::FunctionDef { name, params, return_type: None, body })
+        Ok(Stmt::FunctionDef { name, params, return_type, body })
     }
     
     fn parse_return(&mut self) -> Result<Stmt, HornetError> {

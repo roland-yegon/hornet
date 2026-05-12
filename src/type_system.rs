@@ -18,12 +18,15 @@ pub enum HornetType {
 
 pub struct TypeSystem {
     scopes: Vec<HashMap<String, HornetType>>,
+    // Track inferred function parameter and return types
+    function_signatures: HashMap<String, (Vec<HornetType>, HornetType)>,
 }
 
 impl TypeSystem {
     pub fn new() -> Self {
         TypeSystem {
             scopes: vec![HashMap::new()],
+            function_signatures: HashMap::new(),
         }
     }
 }
@@ -36,7 +39,38 @@ impl Default for TypeSystem {
 
 impl TypeSystem {
     pub fn analyze(&mut self, program: &Program) -> Result<(), HornetError> {
+        // First pass: collect function signatures with return types
+        self.collect_function_signatures(&program.statements)?;
+        
+        // Second pass: check statements with type information
         self.check_stmt_list(&program.statements)
+    }
+
+    fn collect_function_signatures(&mut self, statements: &[Stmt]) -> Result<(), HornetError> {
+        for stmt in statements {
+            if let Stmt::FunctionDef { name, params, return_type, body: _ } = stmt {
+                let return_type = return_type.as_ref().map_or(HornetType::Void, |rt| {
+                    self.parse_type_name(rt)
+                });
+
+                // For now, all parameters are inferred as Void, will be refined during checking
+                let param_types = vec![HornetType::Void; params.len()];
+
+                self.function_signatures.insert(name.clone(), (param_types, return_type));
+            }
+        }
+        Ok(())
+    }
+
+    fn parse_type_name(&self, type_str: &str) -> HornetType {
+        match type_str {
+            "Int" => HornetType::Int,
+            "Float" => HornetType::Float,
+            "String" => HornetType::String,
+            "Bool" => HornetType::Bool,
+            "Void" => HornetType::Void,
+            _ => HornetType::Custom(type_str.to_string()),
+        }
     }
 
     fn check_stmt_list(&mut self, statements: &[Stmt]) -> Result<(), HornetError> {
@@ -76,39 +110,32 @@ impl TypeSystem {
                     Err(HornetError::Type("Left-hand side of assignment must be an identifier".into()))
                 }
             },
-            Stmt::FunctionDef { name, params, body, return_type } => {
-                // Create function type with parameter types (initially all Void, will be inferred)
-                let param_types = vec![HornetType::Void; params.len()];
-                let return_type = return_type.as_ref().map_or(HornetType::Void, |rt| {
-                    // For now, just handle basic types
-                    match rt.as_str() {
-                        "Int" => HornetType::Int,
-                        "Float" => HornetType::Float,
-                        "String" => HornetType::String,
-                        "Bool" => HornetType::Bool,
-                        "Void" => HornetType::Void,
-                        _ => HornetType::Custom(rt.clone()),
-                    }
-                });
+            Stmt::FunctionDef { name, params, body, return_type: _ } => {
+                // Get the function signature from the first pass
+                let (param_types, return_type) = self.function_signatures.get(name).cloned()
+                    .unwrap_or_else(|| {
+                        (vec![HornetType::Void; params.len()], HornetType::Void)
+                    });
 
-                let func_type = HornetType::Function(param_types, Box::new(return_type.clone()));
-
-                // Add function to current scope
+                // Create function type and add to scope
+                let func_type = HornetType::Function(param_types.clone(), Box::new(return_type.clone()));
                 self.current_scope().insert(name.clone(), func_type);
 
                 // Create new scope for function body
                 self.scopes.push(HashMap::new());
 
-                // Add parameters to function scope (initially Void, will be refined during inference)
-                for param in params {
-                    self.current_scope().insert(param.clone(), HornetType::Void);
+                // Add parameters to function scope
+                for (i, param) in params.iter().enumerate() {
+                    let param_type = if i < param_types.len() {
+                        param_types[i].clone()
+                    } else {
+                        HornetType::Void
+                    };
+                    self.current_scope().insert(param.clone(), param_type);
                 }
 
                 // Check function body
                 self.check_stmt_list(body)?;
-
-                // TODO: Infer actual parameter and return types from usage
-                // For now, we leave them as Void
 
                 self.scopes.pop();
                 Ok(())
@@ -210,14 +237,20 @@ impl TypeSystem {
                 let right_type = self.check_expr(right)?;
                 match op.as_str() {
                     "+" | "-" | "*" | "/" | "%" | "//" => {
-                        if (left_type == HornetType::Int || left_type == HornetType::Float) &&
-                           (right_type == HornetType::Int || right_type == HornetType::Float) {
-                            if op == "/" {
+                        // Check if operands are numeric or Void (untyped)
+                        let left_numeric = matches!(left_type, HornetType::Int | HornetType::Float | HornetType::Void);
+                        let right_numeric = matches!(right_type, HornetType::Int | HornetType::Float | HornetType::Void);
+                        
+                        if left_numeric && right_numeric {
+                            // Type inference for untyped operands
+                            if left_type == HornetType::Void && right_type == HornetType::Void {
+                                Ok(HornetType::Int) // Default to Int for untyped
+                            } else if left_type == HornetType::Float || right_type == HornetType::Float {
+                                Ok(if op == "//" { HornetType::Int } else { HornetType::Float })
+                            } else if op == "/" {
                                 Ok(HornetType::Float) // division always returns float
                             } else if op == "//" {
                                 Ok(HornetType::Int) // floor division returns int
-                            } else if left_type == HornetType::Float || right_type == HornetType::Float {
-                                Ok(HornetType::Float)
                             } else {
                                 Ok(HornetType::Int)
                             }

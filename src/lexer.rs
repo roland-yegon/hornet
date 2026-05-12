@@ -19,6 +19,7 @@ pub enum TokenType {
     Equals, Plus, Minus, Star, Slash, FloorDiv, Percent, Colon, Dot,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket,
     Arrow,     // =>
+    RArrow,    // ->
     Range,     // ..
     RangeExcl, // ..<
     
@@ -296,7 +297,15 @@ impl Lexer {
                 }
             }
             '+' => { self.advance(); Some(Token { token_type: TokenType::Plus, line: self.line, column: start_col }) }
-            '-' => { self.advance(); Some(Token { token_type: TokenType::Minus, line: self.line, column: start_col }) }
+            '-' => {
+                self.advance();
+                if self.peek(0) == Some('>') {
+                    self.advance();
+                    Some(Token { token_type: TokenType::RArrow, line: self.line, column: start_col })
+                } else {
+                    Some(Token { token_type: TokenType::Minus, line: self.line, column: start_col })
+                }
+            }
             '*' => { self.advance(); Some(Token { token_type: TokenType::Star, line: self.line, column: start_col }) }
             '/' => {
                 self.advance();

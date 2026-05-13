@@ -2,6 +2,12 @@ use crate::ast::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 
+enum EmitStatus {
+    Continue,
+    BlockTerminated,
+    Returned,
+}
+
 pub struct Codegen {
     next_id: usize,
     globals: Vec<String>,
@@ -10,6 +16,7 @@ pub struct Codegen {
     allocas: Vec<Vec<String>>,
     record_defs: HashMap<String, Vec<(String, String)>>,
     imported_modules: HashSet<String>,
+    loop_stack: Vec<(String, String)>,
 }
 
 impl Codegen {
@@ -22,6 +29,7 @@ impl Codegen {
             allocas: Vec::new(),
             record_defs: HashMap::new(),
             imported_modules: HashSet::new(),
+            loop_stack: Vec::new(),
         }
     }
 }
@@ -264,7 +272,7 @@ impl Codegen {
         }
     }
 
-    fn emit_if(&mut self, condition: &Expr, then_branch: &[Stmt], else_ifs: &[(Expr, Vec<Stmt>)], else_branch: &Option<Vec<Stmt>>) -> Result<(), String> {
+    fn emit_if(&mut self, condition: &Expr, then_branch: &[Stmt], else_ifs: &[(Expr, Vec<Stmt>)], else_branch: &Option<Vec<Stmt>>) -> Result<EmitStatus, String> {
         let (_, cond_val) = self.emit_expr(condition)?;
         let cond_bool = self.fresh();
         self.emit_line(format!("  {} = icmp ne i64 {}, 0", cond_bool, cond_val));
@@ -275,22 +283,36 @@ impl Codegen {
 
         self.emit_line(format!("  br i1 {}, label %{}, label %{}", cond_bool, then_label, else_label));
         self.emit_line(format!("{}:", then_label));
-        self.emit_block(then_branch)?;
-        self.emit_line(format!("  br label %{}", end_label));
+        let then_status = self.emit_block(then_branch)?;
+        if matches!(then_status, EmitStatus::Continue) {
+            self.emit_line(format!("  br label %{}", end_label));
+        }
 
         self.emit_line(format!("{}:", else_label));
-        if let Some((first_elif_cond, first_elif_body)) = else_ifs.first() {
-            self.emit_if(first_elif_cond, first_elif_body, &else_ifs[1..], else_branch)?;
+        let else_status = if let Some((first_elif_cond, first_elif_body)) = else_ifs.first() {
+            self.emit_if(first_elif_cond, first_elif_body, &else_ifs[1..], else_branch)?
         } else if let Some(branch) = else_branch {
-            self.emit_block(branch)?;
+            self.emit_block(branch)?
+        } else {
+            EmitStatus::Continue
+        };
+
+        if matches!(else_status, EmitStatus::Continue) {
+            self.emit_line(format!("  br label %{}", end_label));
         }
-        self.emit_line(format!("  br label %{}", end_label));
 
         self.emit_line(format!("{}:", end_label));
-        Ok(())
+
+        if matches!(then_status, EmitStatus::Continue) || matches!(else_status, EmitStatus::Continue) {
+            Ok(EmitStatus::Continue)
+        } else if matches!(then_status, EmitStatus::Returned) || matches!(else_status, EmitStatus::Returned) {
+            Ok(EmitStatus::Returned)
+        } else {
+            Ok(EmitStatus::BlockTerminated)
+        }
     }
 
-    fn emit_while(&mut self, condition: &Expr, body: &[Stmt]) -> Result<(), String> {
+    fn emit_while(&mut self, condition: &Expr, body: &[Stmt]) -> Result<EmitStatus, String> {
         let loop_label = self.fresh_label("loop");
         let body_label = self.fresh_label("body");
         let end_label = self.fresh_label("end");
@@ -303,14 +325,21 @@ impl Codegen {
         self.emit_line(format!("  br i1 {}, label %{}, label %{}", cond_bool, body_label, end_label));
 
         self.emit_line(format!("{}:", body_label));
-        self.emit_block(body)?;
-        self.emit_line(format!("  br label %{}", loop_label));
+        self.loop_stack.push((end_label.clone(), loop_label.clone()));
+        let body_status = self.emit_block(body)?;
+        self.loop_stack.pop();
 
-        self.emit_line(format!("{}:", end_label));
-        Ok(())
+        if matches!(body_status, EmitStatus::Continue) {
+            self.emit_line(format!("  br label %{}", loop_label));
+            Ok(EmitStatus::Continue)
+        } else if matches!(body_status, EmitStatus::Returned) {
+            Ok(EmitStatus::Returned)
+        } else {
+            Ok(EmitStatus::Continue)
+        }
     }
 
-    fn emit_for(&mut self, iterator: &str, iterable: &Expr, body: &[Stmt]) -> Result<(), String> {
+    fn emit_for(&mut self, iterator: &str, iterable: &Expr, body: &[Stmt]) -> Result<EmitStatus, String> {
         if let Expr::Range { start, end, inclusive } = iterable {
             let (start_ty, start_val) = self.emit_expr(start)?;
             let (end_ty, end_val) = self.emit_expr(end)?;
@@ -335,14 +364,24 @@ impl Codegen {
             self.emit_line(format!("  br i1 {}, label %{}, label %{}", cmp_target, body_label, end_label));
 
             self.emit_line(format!("{}:", body_label));
-            self.emit_block(body)?;
-            let next_val = self.fresh();
-            self.emit_line(format!("  {} = add i64 {}, 1", next_val, iter_val));
-            self.emit_line(format!("  store i64 {}, i64* {}", next_val, iter_ptr));
-            self.emit_line(format!("  br label %{}", loop_label));
+            self.loop_stack.push((end_label.clone(), loop_label.clone()));
+            let body_status = self.emit_block(body)?;
+            self.loop_stack.pop();
+
+            if matches!(body_status, EmitStatus::Continue) {
+                let next_val = self.fresh();
+                self.emit_line(format!("  {} = add i64 {}, 1", next_val, iter_val));
+                self.emit_line(format!("  store i64 {}, i64* {}", next_val, iter_ptr));
+                self.emit_line(format!("  br label %{}", loop_label));
+            }
 
             self.emit_line(format!("{}:", end_label));
-            Ok(())
+
+            if matches!(body_status, EmitStatus::Returned) {
+                Ok(EmitStatus::Returned)
+            } else {
+                Ok(EmitStatus::Continue)
+            }
         } else {
             Err("Only range iterables are supported in for loops".to_string())
         }
@@ -367,13 +406,13 @@ impl Codegen {
         Ok(())
     }
 
-    fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
+    fn emit_stmt(&mut self, stmt: &Stmt) -> Result<EmitStatus, String> {
         match stmt {
             Stmt::Let { name, value } => {
                 let (ty, val) = self.emit_expr(value)?;
                 let ptr = self.allocate_local(name, &ty);
                 self.emit_line(format!("  store {} {}, {}* {}", ty, val, ty, ptr));
-                Ok(())
+                Ok(EmitStatus::Continue)
             }
             Stmt::Assignment { lhs, value } => {
                 if let Expr::Identifier(name) = lhs {
@@ -384,13 +423,13 @@ impl Codegen {
                         self.allocate_local(name, &ty)
                     };
                     self.emit_line(format!("  store {} {}, {}* {}", ty, val, ty, ptr));
-                    Ok(())
+                    Ok(EmitStatus::Continue)
                 } else {
                     Err("Only identifier assignments are supported in codegen".to_string())
                 }
             }
             Stmt::Expr(expr) => {
-                self.emit_expr(expr).map(|_| ())
+                self.emit_expr(expr).map(|_| EmitStatus::Continue)
             }
             Stmt::Return(expr) => {
                 let (ty, val) = self.emit_expr(expr)?;
@@ -399,7 +438,7 @@ impl Codegen {
                 } else {
                     self.emit_line("  ret void");
                 }
-                Ok(())
+                Ok(EmitStatus::Returned)
             }
             Stmt::If { condition, then_branch, else_ifs, else_branch } => {
                 self.emit_if(condition, then_branch, else_ifs, else_branch)
@@ -407,16 +446,43 @@ impl Codegen {
             Stmt::While { condition, body } => self.emit_while(condition, body),
             Stmt::For { iterator, iterable, body } => self.emit_for(iterator, iterable, body),
             Stmt::Loop { body } => {
-                // [[PHASE BLOCKED: loop codegen not yet implemented]]
-                self.emit_block(body)
+                let loop_label = self.fresh_label("loop");
+                let body_label = self.fresh_label("loop.body");
+                let end_label = self.fresh_label("loop.end");
+
+                self.emit_line(format!("  br label %{}", loop_label));
+                self.emit_line(format!("{}:", loop_label));
+                self.emit_line(format!("  br label %{}", body_label));
+                self.emit_line(format!("{}:", body_label));
+
+                self.loop_stack.push((end_label.clone(), loop_label.clone()));
+                let body_status = self.emit_block(body)?;
+                self.loop_stack.pop();
+
+                if matches!(body_status, EmitStatus::Continue) {
+                    self.emit_line(format!("  br label %{}", loop_label));
+                    Ok(EmitStatus::Continue)
+                } else if matches!(body_status, EmitStatus::Returned) {
+                    Ok(EmitStatus::Returned)
+                } else {
+                    Ok(EmitStatus::Continue)
+                }
             }
             Stmt::Break => {
-                // [[PHASE BLOCKED: break codegen not yet implemented]]
-                Ok(())
+                if let Some((break_label, _)) = self.loop_stack.last() {
+                    self.emit_line(format!("  br label %{}", break_label));
+                    Ok(EmitStatus::BlockTerminated)
+                } else {
+                    Err("Break used outside loop".to_string())
+                }
             }
             Stmt::Continue => {
-                // [[PHASE BLOCKED: continue codegen not yet implemented]]
-                Ok(())
+                if let Some((_, continue_label)) = self.loop_stack.last() {
+                    self.emit_line(format!("  br label %{}", continue_label));
+                    Ok(EmitStatus::BlockTerminated)
+                } else {
+                    Err("Continue used outside loop".to_string())
+                }
             }
             Stmt::FunctionDef { name, params, body, return_type: _ } => {
                 let param_defs = params.iter().enumerate().map(|(index, _)| format!("i64 %arg{}", index)).collect::<Vec<_>>().join(", ");
@@ -427,11 +493,13 @@ impl Codegen {
                     let ptr = self.allocate_local(param_name, "i64");
                     self.emit_line(format!("  store i64 %arg{}, i64* {}", index, ptr));
                 }
-                self.emit_block(body)?;
-                self.emit_line("  ret void");
+                let func_status = self.emit_block(body)?;
+                if matches!(func_status, EmitStatus::Continue) {
+                    self.emit_line("  ret void");
+                }
                 self.exit_scope();
                 self.emit_line("}");
-                Ok(())
+                Ok(EmitStatus::Continue)
             }
             Stmt::RecordDef { name, fields } => {
                 self.record_defs.insert(name.clone(), fields.clone());
@@ -470,23 +538,26 @@ impl Codegen {
 
                 self.exit_scope();
                 self.emit_line("}");
-                Ok(())
+                Ok(EmitStatus::Continue)
             }
             Stmt::Use(module_name) => {
-                self.import_module(module_name)
+                self.import_module(module_name).map(|_| EmitStatus::Continue)
             }
             Stmt::Match { .. } => {
                 // [[PHASE BLOCKED: match codegen not yet implemented]]
-                Ok(())
+                Ok(EmitStatus::Continue)
             }
         }
     }
 
-    fn emit_block(&mut self, statements: &[Stmt]) -> Result<(), String> {
+    fn emit_block(&mut self, statements: &[Stmt]) -> Result<EmitStatus, String> {
         for stmt in statements {
-            self.emit_stmt(stmt)?;
+            let status = self.emit_stmt(stmt)?;
+            if !matches!(status, EmitStatus::Continue) {
+                return Ok(status);
+            }
         }
-        Ok(())
+        Ok(EmitStatus::Continue)
     }
 
     pub fn generate(&mut self, program: &Program) -> String {

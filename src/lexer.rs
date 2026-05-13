@@ -4,8 +4,13 @@ use serde::{Serialize, Deserialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum TokenType {
     // Keywords
-    Fn, If, Else, For, While, Match, Import, Const, In, Return, And, Or, Not,
-    Struct, Async, Await, Pub, Let, Break, Continue, Loop,
+    Define, If, Else, For, While, Check, Use, Const, In, Return, And, Or, Not,
+    Record, Async, Await, Pub, Let, Break, Continue, Repeat,
+    When, Otherwise, Gives, From, To, Upto,
+    Is, Isnt, Above, Below, Atleast, Atmost,
+    
+    // Deprecated legacy keywords (kept for compatibility only)
+    Fn, Match, Import, Struct, Loop,
     
     // Literals
     Identifier(String),
@@ -195,18 +200,35 @@ impl Lexer {
         }
 
         let token_type = match ident_str.as_str() {
-            "fn" => TokenType::Fn,
+            "define" => TokenType::Define,
             "if" => TokenType::If,
             "else" => TokenType::Else,
             "for" => TokenType::For,
             "while" => TokenType::While,
-            "loop" => TokenType::Loop,
-            "match" => TokenType::Match,
-            "import" => TokenType::Import,
+            "repeat" => TokenType::Repeat,
+            "check" => TokenType::Check,
+            "use" => TokenType::Use,
+            "when" => TokenType::When,
+            "otherwise" => TokenType::Otherwise,
+            "gives" => TokenType::Gives,
+            "from" => TokenType::From,
+            "to" => TokenType::To,
+            "upto" => TokenType::Upto,
+            "record" => TokenType::Record,
+            "is" => TokenType::Is,
+            "isnt" => TokenType::Isnt,
+            "above" => TokenType::Above,
+            "below" => TokenType::Below,
+            "atleast" => TokenType::Atleast,
+            "atmost" => TokenType::Atmost,
+            "loop" => TokenType::Loop, // [[DEPRECATED: use 'repeat']]
+            "match" => TokenType::Match, // [[DEPRECATED: use 'check']]
+            "import" => TokenType::Import, // [[DEPRECATED: use 'use']]
+            "struct" => TokenType::Struct, // [[DEPRECATED: use 'record']]
+            "fn" => TokenType::Fn, // [[DEPRECATED: use 'define']]
             "const" => TokenType::Const,
             "let" => TokenType::Let,
             "in" => TokenType::In,
-            "struct" => TokenType::Struct,
             "async" => TokenType::Async,
             "await" => TokenType::Await,
             "pub" => TokenType::Pub,

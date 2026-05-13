@@ -106,6 +106,17 @@ impl Codegen {
         ("i8*".to_string(), target)
     }
 
+    fn type_to_llvm(&self, type_name: &str) -> String {
+        match type_name {
+            "Int" => "i64".to_string(),
+            "Float" => "double".to_string(),
+            "String" => "i8*".to_string(),
+            "Bool" => "i1".to_string(),
+            "Unit" => "void".to_string(),
+            _ => format!("%{}", type_name), // Custom types like records
+        }
+    }
+
     fn emit_expr(&mut self, expr: &Expr) -> Result<(String, String), String> {
         match expr {
             Expr::Literal(Literal::Int(value)) => Ok(("i64".to_string(), value.to_string())),
@@ -367,12 +378,46 @@ impl Codegen {
                 self.emit_line("}");
                 Ok(())
             }
-            Stmt::StructDef { .. } => {
-                // [[PHASE BLOCKED: struct codegen not yet implemented]]
+            Stmt::RecordDef { name, fields } => {
+                // Define the LLVM struct type
+                let field_types: Vec<String> = fields.iter()
+                    .map(|(_, ty)| self.type_to_llvm(ty))
+                    .collect();
+                self.emit_line(&format!("%{} = type {{ {} }}", name, field_types.join(", ")));
+                
+                // Create constructor function
+                let param_types: Vec<String> = field_types.clone();
+                let param_list: Vec<String> = param_types.iter()
+                    .enumerate()
+                    .map(|(i, ty)| format!("{} %arg{}", ty, i))
+                    .collect();
+                
+                self.emit_line(&format!("define %{} @\"{}\"({}) {{", name, name, param_list.join(", ")));
+                self.enter_scope();
+                
+                // Allocate the struct
+                let struct_ptr = self.fresh();
+                self.emit_line(&format!("  {} = alloca %{}", struct_ptr, name));
+                
+                // Store each field
+                for (i, (_, field_type)) in fields.iter().enumerate() {
+                    let _field_ptr = self.fresh();
+                    let gep = self.fresh();
+                    self.emit_line(&format!("  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}", gep, name, name, struct_ptr, i));
+                    self.emit_line(&format!("  store {} %arg{}, {}* {}", self.type_to_llvm(field_type), i, self.type_to_llvm(field_type), gep));
+                }
+                
+                // Load the struct and return it
+                let result = self.fresh();
+                self.emit_line(&format!("  {} = load %{}, %{}* {}", result, name, name, struct_ptr));
+                self.emit_line(&format!("  ret %{} {}", name, result));
+                
+                self.exit_scope();
+                self.emit_line("}");
                 Ok(())
             }
-            Stmt::Import(_) => {
-                // [[PHASE BLOCKED: import codegen not yet implemented]]
+            Stmt::Use(_) => {
+                // [[PHASE BLOCKED: module import codegen not yet implemented]]
                 Ok(())
             }
             Stmt::Match { .. } => {

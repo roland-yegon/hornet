@@ -243,12 +243,26 @@ impl Interpreter {
                 self.env.define(name, func);
                 Ok(ControlFlow::None)
             }
-            Stmt::StructDef { .. } => {
-                // [[PHASE BLOCKED: struct instantiation not yet implemented]]
+            Stmt::RecordDef { name, fields } => {
+                // Store field names for the record constructor
+                let field_names: Vec<String> = fields.iter().map(|(name, _)| name.clone()).collect();
+                self.env.define(&format!("__record_{}_fields", name), Value::Array(
+                    field_names.iter().map(|n| Value::Str(n.clone())).collect()
+                ));
+                
+                // Create a record constructor function (body will be ignored for record constructors)
+                let constructor = Value::Function {
+                    params: field_names,
+                    body: vec![], // Empty body - handled specially in eval_call
+                    env: self.env.clone(),
+                };
+                
+                self.env.define(name, constructor);
                 Ok(ControlFlow::None)
             }
-            Stmt::Import(_) => {
-                // [[PHASE BLOCKED: module system not yet implemented]]
+            Stmt::Use(_name) => {
+                // [[PHASE BLOCKED: module importing not yet implemented]]
+                // For now, just ignore use statements
                 Ok(ControlFlow::None)
             }
             Stmt::Expr(expr) => {
@@ -333,8 +347,16 @@ impl Interpreter {
                     _ => Err("Cannot index this value".into()),
                 }
             }
-            Expr::MemberAccess { .. } => {
-                Err("Member access not yet implemented".into())
+            Expr::MemberAccess { object, member } => {
+                let obj = self.eval_expr(object)?;
+                match obj {
+                    Value::Record { fields, .. } => {
+                        fields.get(member)
+                            .cloned()
+                            .ok_or_else(|| format!("Record has no field '{}'", member).into())
+                    }
+                    _ => Err(format!("Member access '.' not supported on type {}", type_name(&obj)).into()),
+                }
             }
             Expr::NamedArg { .. } => {
                 Err("Named arguments not yet implemented".into())
@@ -501,6 +523,37 @@ impl Interpreter {
         // User-defined function call
         let func = self.eval_expr(target)?;
         if let Value::Function { params, body, env } = func {
+            // Check if this is a record constructor
+            if let Expr::Identifier(func_name) = target {
+                let field_names_opt = self.env.get(&format!("__record_{}_fields", func_name)).cloned();
+                if let Some(Value::Array(field_names)) = field_names_opt {
+                    // This is a record constructor call
+                    if params.len() != args.len() {
+                        return Err(format!(
+                            "Record constructor expects {} arguments, got {}",
+                            params.len(),
+                            args.len()
+                        ).into());
+                    }
+                    
+                    // Evaluate arguments
+                    let mut arg_values = Vec::new();
+                    for arg in args {
+                        arg_values.push(self.eval_expr(arg)?);
+                    }
+                    
+                    // Create the record
+                    let mut fields = std::collections::HashMap::new();
+                    for (field_name_val, val) in field_names.iter().zip(arg_values.iter()) {
+                        if let Value::Str(field_name) = field_name_val {
+                            fields.insert(field_name.clone(), val.clone());
+                        }
+                    }
+                    
+                    return Ok(Value::Record { name: func_name.clone(), fields });
+                }
+            }
+            
             if params.len() != args.len() {
                 return Err(format!(
                     "Function expects {} arguments, got {}",
@@ -690,15 +743,16 @@ impl Default for Interpreter {
     }
 }
 
-fn type_name(val: &Value) -> &'static str {
+fn type_name(val: &Value) -> String {
     match val {
-        Value::Int(_) => "Int",
-        Value::Float(_) => "Float",
-        Value::Bool(_) => "Bool",
-        Value::Str(_) => "Str",
-        Value::Unit => "Unit",
-        Value::Array(_) => "Array",
-        Value::Map(_) => "Map",
-        Value::Function { .. } => "Function",
+        Value::Int(_) => "Int".to_string(),
+        Value::Float(_) => "Float".to_string(),
+        Value::Bool(_) => "Bool".to_string(),
+        Value::Str(_) => "String".to_string(),
+        Value::Unit => "Unit".to_string(),
+        Value::Array(_) => "Array".to_string(),
+        Value::Map(_) => "Map".to_string(),
+        Value::Function { .. } => "Function".to_string(),
+        Value::Record { name, .. } => name.clone(),
     }
 }

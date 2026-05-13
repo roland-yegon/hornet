@@ -6,7 +6,7 @@ use hornet::type_system::TypeSystem;
 #[test]
 fn compiler_pipeline_generates_llvm_ir() {
     let source = r#"
-fn main():
+define main():
     print("Hello Hornet")
 "#;
     let mut lexer = Lexer::new(source);
@@ -29,8 +29,8 @@ fn main():
 #[test]
 fn codegen_supports_if_and_for_control_flow() {
     let source = r#"
-for i in 1..3:
-    if i == 1:
+for i from 1 to 3:
+    if i is 1:
         print("first")
     else:
         print("other")

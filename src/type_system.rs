@@ -18,24 +18,6 @@ pub enum HornetType {
     Custom(String),
 }
 
-impl HornetType {
-    fn name(&self) -> &'static str {
-        match self {
-            HornetType::Int => "Int",
-            HornetType::Float => "Float",
-            HornetType::String => "String",
-            HornetType::Bool => "Bool",
-            HornetType::Unit => "Unit",
-            HornetType::Array(_) => "Array",
-            HornetType::Map(_, _) => "Map",
-            HornetType::Function(_, _) => "Function",
-            HornetType::Unknown => "Unknown",
-            HornetType::Never => "Never",
-            HornetType::Custom(_) => "Custom",
-        }
-    }
-}
-
 pub struct TypeSystem {
     scopes: Vec<HashMap<String, HornetType>>,
     // Track inferred function parameter and return types
@@ -210,8 +192,19 @@ impl TypeSystem {
                 }
                 Ok(())
             },
-            Stmt::StructDef { .. } => Ok(()),
-            Stmt::Import(_) => Ok(()),
+            Stmt::RecordDef { name, fields: _ } => {
+                // Register the record type
+                let record_type = HornetType::Custom(name.clone());
+                self.current_scope().insert(name.clone(), record_type.clone());
+                
+                // Also register the constructor as a function that returns the record type
+                let param_types = vec![HornetType::Int; 2]; // Placeholder - should be actual field types
+                let constructor_type = HornetType::Function(param_types, Box::new(record_type));
+                self.current_scope().insert(name.clone(), constructor_type);
+                
+                Ok(())
+            }
+            Stmt::Use(_) => Ok(()),
             Stmt::Break => Ok(()),
             Stmt::Continue => Ok(()),
             Stmt::Loop { body } => {
@@ -292,7 +285,31 @@ impl TypeSystem {
                 let left_type = self.check_expr(left)?;
                 let right_type = self.check_expr(right)?;
                 match op.as_str() {
-                    "+" | "-" | "*" | "/" | "%" | "//" => {
+                    "+" => {
+                        // Handle string concatenation and arithmetic
+                        if (left_type == HornetType::String || left_type == HornetType::Unknown) && 
+                           (right_type == HornetType::String || right_type == HornetType::Unknown) {
+                            Ok(HornetType::String)
+                        } else {
+                            // Fall back to arithmetic
+                            let left_numeric = matches!(left_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
+                            let right_numeric = matches!(right_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
+                            
+                            if left_numeric && right_numeric {
+                                // Type inference for untyped operands
+                                if left_type == HornetType::Unknown && right_type == HornetType::Unknown {
+                                    Ok(HornetType::Int) // Default to Int for untyped
+                                } else if left_type == HornetType::Float || right_type == HornetType::Float {
+                                    Ok(HornetType::Float)
+                                } else {
+                                    Ok(HornetType::Int)
+                                }
+                            } else {
+                                Err(self.type_error_simple("Arithmetic operators require numeric operands".into()))
+                            }
+                        }
+                    }
+                    "-" | "*" | "/" | "%" | "//" => {
                         // Check if operands are numeric or Void (untyped)
                         let left_numeric = matches!(left_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
                         let right_numeric = matches!(right_type, HornetType::Int | HornetType::Float | HornetType::Unknown);
@@ -517,11 +534,20 @@ impl TypeSystem {
                         }
                     }
                     Expr::MemberAccess { object, member } => {
-                        // Method call: check the object and return a type based on the method
                         let obj_type = self.check_expr(object)?;
-                        match member.as_str() {
-                            "str" => Ok(HornetType::String),
-                            _ => Err(self.type_error_simple(format!("Unknown method '{}' on type {:?}", member, obj_type))),
+                        match obj_type {
+                            HornetType::Custom(_record_name) => {
+                                // For now, assume all field accesses are valid and return Int
+                                // TODO: Track actual field types
+                                Ok(HornetType::Int)
+                            }
+                            _ => {
+                                // Method call: check the object and return a type based on the method
+                                match member.as_str() {
+                                    "str" => Ok(HornetType::String),
+                                    _ => Err(self.type_error_simple(format!("Unknown method '{}' on type {:?}", member, obj_type))),
+                                }
+                            }
                         }
                     }
                     _ => Err(self.type_error_simple("Unsupported call target".into())),

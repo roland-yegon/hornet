@@ -1,4 +1,5 @@
 use std::fmt;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -13,6 +14,10 @@ pub enum Value {
         params: Vec<String>,
         body: Vec<crate::ast::Stmt>,
         env: crate::interpreter::Environment,
+    },
+    Record {
+        name: String,
+        fields: HashMap<String, Value>,
     },
 }
 
@@ -37,6 +42,13 @@ impl fmt::Display for Value {
                 write!(f, "{{{}}}", items.join(", "))
             }
             Value::Function { params, .. } => write!(f, "<fn({})>", params.join(", ")),
+            Value::Record { name, fields } => {
+                let field_strs: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
+                write!(f, "{} {{{}}}", name, field_strs.join(", "))
+            }
         }
     }
 }

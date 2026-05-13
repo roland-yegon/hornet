@@ -1,37 +1,91 @@
-(* Hornet EBNF Grammar *)
+(* Hornet 2.0 EBNF Grammar — English Edition *)
 
-program = { statement | function_def } ;
+program       = { statement | function_def } ;
 
-statement = assignment | if_stmt | for_stmt | while_stmt | expr_stmt ;
+statement     = assignment | if_stmt | for_stmt | while_stmt
+              | repeat_stmt | check_stmt | expr_stmt
+              | return_stmt | break_stmt | continue_stmt
+              | use_stmt | record_def ;
 
-function_def = "fn" , identifier , "(" , [ param_list ] , ")" , ":" , block ;
+function_def  = "define" , identifier , "(" , [ param_list ] , ")"
+              , [ "gives" , type_name ] , ":" , block ;
 
-block = newline , indent , { statement } , dedent ;
+param_list    = param , { "," , param } ;
+param         = identifier , [ ":" , type_name ] ;
 
-assignment = identifier , "=" , expression ;
+block         = newline , indent , { statement } , dedent ;
 
-if_stmt = "if" , expression , ":" , block , 
-          { "else if" , expression , ":" , block } , 
-          [ "else" , ":" , block ] ;
+assignment    = identifier , "=" , expression ;
 
-for_stmt = "for" , identifier , "in" , range_expr , ":" , block ;
+if_stmt       = "if" , expression , ":" , block ,
+              { "else if" , expression , ":" , block } ,
+              [ "else" , ":" , block ] ;
 
-range_expr = expression , ( ".." | "..<" ) , expression ;
+for_stmt      = "for" , identifier , "from" , expression ,
+              ( "to" | "upto" ) , expression , ":" , block ;
 
-expression = term , { ( "+" | "-" ) , term } ;
+while_stmt    = "while" , expression , ":" , block ;
 
-term = factor , { ( "*" | "/" ) , factor } ;
+repeat_stmt   = "repeat" , ":" , block ;
 
-factor = identifier | number | string | "(" , expression , ")" | call ;
+check_stmt    = "check" , expression , ":" , newline , indent ,
+              { "when" , expression , ":" , block } ,
+              [ "otherwise" , ":" , block ] ,
+              dedent ;
 
-call = identifier , "(" , [ arg_list ] , ")" ;
+use_stmt      = "use" , identifier ;
 
-identifier = letter , { letter | digit | "_" } ;
+return_stmt   = "return" , expression ;
 
-number = digit , { digit } ;
+break_stmt    = "break" ;
 
-string = '"' , { any_character } , '"' ;
+continue_stmt = "continue" ;
 
-newline = "\n" ;
-indent = "    " ; (* 4 spaces *)
-dedent = "" ; (* Handled by lexer indentation tracking *)
+record_def    = "record" , identifier , ":" , newline , indent ,
+              { field_def } , dedent ;
+
+field_def     = identifier , ":" , type_name ;
+
+expression    = logical_or ;
+
+logical_or    = logical_and , { "or" , logical_and } ;
+
+logical_and   = comparison , { "and" , comparison } ;
+
+comparison    = addition , [ cmp_op , addition ] ;
+
+cmp_op        = "==" | "!=" | "<" | ">" | "<=" | ">="
+              | "is" | "isnt" | "above" | "below" | "atleast" | "atmost" ;
+
+addition      = term , { ( "+" | "-" ) , term } ;
+
+term          = factor , { ( "*" | "/" | "//" | "%" ) , factor } ;
+
+factor        = [ "-" | "not" ] , primary ;
+
+primary       = literal | identifier | call | index_access
+              | member_access | "(" , expression , ")" ;
+
+call          = identifier , "(" , [ arg_list ] , ")" ;
+
+arg_list      = expression , { "," , expression } ;
+
+index_access  = primary , "[" , expression , "]" ;
+
+member_access = primary , "." , identifier ;
+
+literal       = integer | float | string | "true" | "false" ;
+
+type_name     = "Int" | "Float" | "String" | "Bool" | identifier ;
+
+identifier    = letter , { letter | digit | "_" } ;
+
+integer       = digit , { digit } ;
+
+float         = digit , { digit } , "." , digit , { digit } ;
+
+string        = '"' , { any_char } , '"' ;
+
+newline       = "\n" ;
+indent        = "    " ;       (* 4 spaces — enforced by lexer *)
+dedent        = "" ;           (* emitted by lexer indentation tracker *)

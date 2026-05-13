@@ -88,11 +88,11 @@ pub enum Stmt {
         return_type: Option<String>,
         body: Vec<Stmt>,
     },
-    StructDef {
+    RecordDef {
         name: String,
         fields: Vec<(String, String)>,
     },
-    Import(String),
+    Use(String),
     Expr(Expr),
 }
 

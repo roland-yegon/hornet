@@ -56,6 +56,9 @@ impl Parser {
     fn expect_identifier(&mut self, context: &str) -> Result<String, HornetError> {
         match self.advance().token_type {
             TokenType::Identifier(name) => Ok(name),
+            TokenType::From => Ok("from".to_string()),
+            TokenType::To => Ok("to".to_string()),
+            TokenType::Upto => Ok("upto".to_string()),
             other => Err(HornetError::Parser(format!("Expected identifier for {}, got {:?}", context, other))),
         }
     }
@@ -74,12 +77,12 @@ impl Parser {
 
     fn parse_statement(&mut self) -> Result<Stmt, HornetError> {
         match &self.peek(0).token_type {
-            TokenType::Fn => self.parse_function_def(),
+            TokenType::Define => self.parse_function_def(),
             TokenType::If => self.parse_if_stmt(),
             TokenType::For => self.parse_for_stmt(),
             TokenType::While => self.parse_while_stmt(),
-            TokenType::Loop => self.parse_loop_stmt(),
-            TokenType::Match => self.parse_match_stmt(),
+            TokenType::Repeat => self.parse_repeat_stmt(),
+            TokenType::Check => self.parse_check_stmt(),
             TokenType::Break => {
                 self.advance();
                 Ok(Stmt::Break)
@@ -88,8 +91,8 @@ impl Parser {
                 self.advance();
                 Ok(Stmt::Continue)
             }
-            TokenType::Import => self.parse_import(),
-            TokenType::Struct => self.parse_struct_def(),
+            TokenType::Use => self.parse_use_stmt(),
+            TokenType::Record => self.parse_record_def(),
             TokenType::Return => self.parse_return(),
             TokenType::Let => self.parse_let_stmt(),
             _ => {
@@ -113,22 +116,22 @@ impl Parser {
         Ok(Stmt::Let { name, value })
     }
 
-    fn parse_loop_stmt(&mut self) -> Result<Stmt, HornetError> {
-        self.advance(); // loop
+    fn parse_repeat_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // repeat
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
         Ok(Stmt::Loop { body })
     }
 
-    fn parse_import(&mut self) -> Result<Stmt, HornetError> {
-        self.advance(); // import
-        let name = self.expect_identifier("import path")?;
-        Ok(Stmt::Import(name))
+    fn parse_use_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // use
+        let name = self.expect_identifier("module path")?;
+        Ok(Stmt::Use(name))
     }
 
-    fn parse_struct_def(&mut self) -> Result<Stmt, HornetError> {
-        self.advance(); // struct
-        let name = self.expect_identifier("struct name")?;
+    fn parse_record_def(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // record
+        let name = self.expect_identifier("record name")?;
         self.consume(TokenType::Colon, "Expected ':'")?;
         self.consume(TokenType::Newline, "Expected newline")?;
         self.consume(TokenType::Indent(0), "Expected indent")?;
@@ -138,20 +141,20 @@ impl Parser {
                 self.advance();
                 continue;
             }
-            let field_name = self.expect_identifier("struct field name")?;
+            let field_name = self.expect_identifier("record field name")?;
             self.consume(TokenType::Colon, "Expected ':'")?;
-            let field_type = self.expect_identifier("struct field type")?;
+            let field_type = self.expect_identifier("record field type")?;
             fields.push((field_name, field_type));
             if matches!(self.peek(0).token_type, TokenType::Comma) {
                 self.advance();
             }
         }
         self.consume(TokenType::Dedent, "Expected dedent")?;
-        Ok(Stmt::StructDef { name, fields })
+        Ok(Stmt::RecordDef { name, fields })
     }
 
     fn parse_function_def(&mut self) -> Result<Stmt, HornetError> {
-        self.advance(); // fn
+        self.advance(); // define
         let name = self.expect_identifier("function name")?;
         self.consume(TokenType::LParen, "Expected '('")?;
         let mut params = Vec::new();
@@ -164,8 +167,7 @@ impl Parser {
         }
         self.consume(TokenType::RParen, "Expected ')'")?;
 
-        // Check for return type annotation: -> Type
-        let return_type = if self.match_token(&[TokenType::RArrow]).is_some() {
+        let return_type = if self.match_token(&[TokenType::Gives]).is_some() {
             Some(self.expect_identifier("return type")?)
         } else {
             None
@@ -235,11 +237,25 @@ impl Parser {
     fn parse_for_stmt(&mut self) -> Result<Stmt, HornetError> {
         self.advance(); // for
         let iterator = self.expect_identifier("for iterator")?;
-        self.consume(TokenType::In, "Expected 'in'")?;
-        let iterable = self.parse_expression()?;
+        self.consume(TokenType::From, "Expected 'from' after iterator")?;
+        let start = self.parse_expression()?;
+        let inclusive = match &self.peek(0).token_type {
+            TokenType::To => {
+                self.advance();
+                true
+            }
+            TokenType::Upto => {
+                self.advance();
+                false
+            }
+            other => {
+                return Err(HornetError::Parser(format!("Expected 'to' or 'upto' in for loop, got {:?}", other)));
+            }
+        };
+        let end = self.parse_expression()?;
         self.consume(TokenType::Colon, "Expected ':'")?;
         let body = self.parse_block()?;
-        Ok(Stmt::For { iterator, iterable, body })
+        Ok(Stmt::For { iterator, iterable: Expr::Range { start: Box::new(start), end: Box::new(end), inclusive }, body })
     }
 
     fn parse_while_stmt(&mut self) -> Result<Stmt, HornetError> {
@@ -250,25 +266,33 @@ impl Parser {
         Ok(Stmt::While { condition, body })
     }
 
-    fn parse_match_stmt(&mut self) -> Result<Stmt, HornetError> {
-        self.advance(); // match
+    fn parse_check_stmt(&mut self) -> Result<Stmt, HornetError> {
+        self.advance(); // check
         let value = self.parse_expression()?;
-        self.consume(TokenType::Colon, "Expected ':'")?;
+        self.consume(TokenType::Colon, "Expected ':' after check expression")?;
         self.consume(TokenType::Newline, "Expected newline")?;
         self.consume(TokenType::Indent(0), "Expected indent")?;
-        
+
         let mut arms = Vec::new();
-        while !matches!(self.peek(0).token_type, TokenType::Dedent) {
-            if matches!(self.peek(0).token_type, TokenType::Newline) {
-                self.advance();
-                continue;
-            }
+        while matches!(self.peek(0).token_type, TokenType::When) {
+            self.advance(); // when
             let pattern = self.parse_expression()?;
-            self.consume(TokenType::Colon, "Expected ':'")?;
+            self.consume(TokenType::Colon, "Expected ':' after when pattern")?;
             let body = self.parse_block()?;
             arms.push((pattern, body));
+            while matches!(self.peek(0).token_type, TokenType::Newline) {
+                self.advance();
+            }
         }
-        self.consume(TokenType::Dedent, "Expected dedent")?;
+
+        if matches!(self.peek(0).token_type, TokenType::Otherwise) {
+            self.advance(); // otherwise
+            self.consume(TokenType::Colon, "Expected ':' after otherwise")?;
+            let body = self.parse_block()?;
+            arms.push((Expr::Identifier("_".to_string()), body));
+        }
+
+        self.consume(TokenType::Dedent, "Expected dedent after check block")?;
         Ok(Stmt::Match { value, arms })
     }
 
@@ -319,12 +343,14 @@ impl Parser {
 
     fn parse_comparison(&mut self) -> Result<Expr, HornetError> {
         let mut node = self.parse_addition()?;
-        while let Some(tok) = self.match_token(&[TokenType::Lt, TokenType::Le, TokenType::Gt, TokenType::Ge]) {
+        while let Some(tok) = self.match_token(&[TokenType::Lt, TokenType::Le, TokenType::Gt, TokenType::Ge, TokenType::Is, TokenType::Isnt, TokenType::Above, TokenType::Below, TokenType::Atleast, TokenType::Atmost]) {
             let op = match tok.token_type {
-                TokenType::Lt => "<".to_string(),
-                TokenType::Le => "<=".to_string(),
-                TokenType::Gt => ">".to_string(),
-                TokenType::Ge => ">=".to_string(),
+                TokenType::Lt | TokenType::Below => "<".to_string(),
+                TokenType::Le | TokenType::Atmost => "<=".to_string(),
+                TokenType::Gt | TokenType::Above => ">".to_string(),
+                TokenType::Ge | TokenType::Atleast => ">=".to_string(),
+                TokenType::Is => "==".to_string(),
+                TokenType::Isnt => "!=".to_string(),
                 _ => unreachable!(),
             };
             node = Expr::BinaryOp {
@@ -402,6 +428,9 @@ impl Parser {
                 TokenType::True => Expr::Literal(Literal::Bool(true)),
                 TokenType::False => Expr::Literal(Literal::Bool(false)),
                 TokenType::Identifier(i) => Expr::Identifier(i),
+                TokenType::From => Expr::Identifier("from".to_string()),
+                TokenType::To => Expr::Identifier("to".to_string()),
+                TokenType::Upto => Expr::Identifier("upto".to_string()),
                 TokenType::LBracket => {
                     let mut elements = Vec::new();
                     if !matches!(self.peek(0).token_type, TokenType::RBracket) {

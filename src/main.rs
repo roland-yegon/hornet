@@ -5,13 +5,13 @@ mod error;
 mod type_system;
 mod coari;
 mod codegen;
+mod driver;
 mod stdlib;
 mod lsp;
 mod interpreter;
 
 use std::env;
 use std::fs;
-use std::path::Path;
 use crate::error::HornetError;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -21,25 +21,31 @@ use crate::codegen::Codegen;
 use crate::lsp::StingerLsp;
 
 fn print_help() {
-    println!("Hornet Language Compiler v0.1.0");
+    println!("Hornet Language Compiler v0.2.0");
     println!();
-    println!("Usage: hornet <command> [<file>]");
+    println!("Usage: hornet <command> [options] <file>");
     println!();
     println!("Commands:");
-    println!("  tokenize <file>    Tokenize source file and display tokens");
-    println!("  parse <file>       Parse source file and output AST as JSON");
-    println!("  check <file>       Type-check program without compilation");
-    println!("  build <file>       Compile to LLVM IR (.ll format)");
-    println!("  run <file>         Execute program");
-    println!("  lsp                Start language server protocol daemon");
-    println!("  --help, -h         Show this help message");
-    println!("  --version, -v      Show version information");
+    println!("  tokenize <file>            Tokenize source file and display tokens");
+    println!("  parse <file>               Parse source file and output AST as JSON");
+    println!("  check <file>               Type-check program without compilation");
+    println!("  build <file>               Compile to native binary");
+    println!("  run <file>                 Execute program immediately using the interpreter");
+    println!("  lsp                        Start language server protocol daemon");
+    println!("  --help, -h                 Show this help message");
+    println!("  --version, -v              Show version information");
+    println!();
+    println!("Build options:");
+    println!("  --release                  Enable optimizations (-O2)");
+    println!("  --emit-ir                  Also write LLVM IR to <file>.ll");
     println!();
     println!("Examples:");
     println!("  hornet tokenize hello.hn");
     println!("  hornet parse program.hn");
     println!("  hornet check program.hn");
-    println!("  hornet build program.hn");
+    println!("  hornet build hello.hn");
+    println!("  hornet build --release app.hn");
+    println!("  hornet build --emit-ir app.hn");
     println!("  hornet run program.hn");
     println!();
     println!("For more information, visit: https://github.com/roland-yegon/hornet");
@@ -56,7 +62,7 @@ fn main() -> Result<(), HornetError> {
                 return Ok(());
             }
             "--version" | "-v" => {
-                println!("hornet version 0.1.0");
+                println!("hornet version 0.2.0");
                 return Ok(());
             }
             _ => {}
@@ -71,7 +77,6 @@ fn main() -> Result<(), HornetError> {
     }
 
     let command = &args[1];
-    let filename_raw = if args.len() > 2 { &args[2] } else { "" };
 
     if command == "lsp" {
         let lsp = StingerLsp::new();
@@ -79,27 +84,38 @@ fn main() -> Result<(), HornetError> {
         return Ok(());
     }
 
-    if filename_raw.is_empty() {
-        return Err("No filename provided".into());
-    }
-
-    let source = fs::read_to_string(filename_raw)?;
-
-    let mut lexer = Lexer::new(&source);
-    let tokens = lexer.tokenize()?;
+    let filename_raw = if args.len() > 2 { &args[2] } else { "" };
 
     match command.as_str() {
         "tokenize" => {
+            if filename_raw.is_empty() {
+                return Err(HornetError::Other("No filename provided for tokenize".into()));
+            }
+            let source = fs::read_to_string(filename_raw)?;
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize()?;
             for token in tokens {
                 println!("{:?}", token);
             }
         }
         "parse" => {
+            if filename_raw.is_empty() {
+                return Err(HornetError::Other("No filename provided for parse".into()));
+            }
+            let source = fs::read_to_string(filename_raw)?;
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize()?;
             let mut parser = Parser::new(tokens);
             let ast = parser.parse()?;
             println!("{}", serde_json::to_string_pretty(&ast)?);
         }
         "check" => {
+            if filename_raw.is_empty() {
+                return Err(HornetError::Other("No filename provided for check".into()));
+            }
+            let source = fs::read_to_string(filename_raw)?;
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize()?;
             let mut parser = Parser::new(tokens);
             let ast = parser.parse()?;
             let mut checker = TypeSystem::new();
@@ -115,6 +131,27 @@ fn main() -> Result<(), HornetError> {
             println!("Check successful.");
         }
         "build" => {
+            let mut release = false;
+            let mut emit_ir = false;
+            let mut filename = None;
+            for arg in &args[2..] {
+                match arg.as_str() {
+                    "--release" => release = true,
+                    "--emit-ir" => emit_ir = true,
+                    other => {
+                        if filename.is_none() {
+                            filename = Some(other.to_string());
+                        } else {
+                            return Err(HornetError::Other(format!("Unexpected build option: {}", other)));
+                        }
+                    }
+                }
+            }
+
+            let filename = filename.ok_or_else(|| HornetError::Other("No file provided for build".into()))?;
+            let source = fs::read_to_string(&filename)?;
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize()?;
             let mut parser = Parser::new(tokens);
             let ast = parser.parse()?;
             let mut checker = TypeSystem::new();
@@ -123,16 +160,16 @@ fn main() -> Result<(), HornetError> {
             coari.analyze(&ast)?;
             let mut gen = Codegen::new();
             let ir = gen.generate(&ast);
-            
-            // Security: Sanitize output path to prevent path traversal
-            let path = Path::new(filename_raw);
-            let safe_name = path.file_name().ok_or_else(|| HornetError::Other("Invalid filename".into()))?.to_str().ok_or_else(|| HornetError::Other("Invalid filename encoding".into()))?;
-            let output_path = format!("{}.ll", safe_name);
-            
-            fs::write(&output_path, ir)?;
-            println!("Compiled to {}", output_path);
+            let binary = driver::build_native(&filename, &source, &ir, release, emit_ir)?;
+            println!("Built: {}", binary);
         }
         "run" => {
+            if filename_raw.is_empty() {
+                return Err(HornetError::Other("No filename provided for run".into()));
+            }
+            let source = fs::read_to_string(filename_raw)?;
+            let mut lexer = Lexer::new(&source);
+            let tokens = lexer.tokenize()?;
             let mut parser = Parser::new(tokens);
             let ast = parser.parse()?;
             let mut checker = TypeSystem::new();

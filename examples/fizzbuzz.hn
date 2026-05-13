@@ -1,10 +1,12 @@
-# Classic FizzBuzz implementation
-for i in 1..100:
-    if i % 15 == 0:
-        print("FizzBuzz")
-    else if i % 3 == 0:
-        print("Fizz")
-    else if i % 5 == 0:
-        print("Buzz")
+define fizzbuzz(n):
+    if n % 15 is 0:
+        return "FizzBuzz"
+    else if n % 3 is 0:
+        return "Fizz"
+    else if n % 5 is 0:
+        return "Buzz"
     else:
-        print(i.str())
+        return str(n)
+
+for i from 1 to 100:
+    print(fizzbuzz(i))

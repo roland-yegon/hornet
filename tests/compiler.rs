@@ -49,6 +49,29 @@ for i from 1 to 3:
 }
 
 #[test]
+fn codegen_supports_record_member_access() {
+    let source = r#"
+record Point:
+    x: Int
+    y: Int
+
+define main():
+    p = Point(1, 2)
+    print(p.x)
+"#;
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().expect("tokenization failed");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().expect("parsing failed");
+    let mut type_system = TypeSystem::new();
+    type_system.analyze(&program).expect("type checking failed");
+    let mut codegen = Codegen::new();
+    let output = codegen.generate(&program);
+    assert!(output.contains("extractvalue %Point"));
+    assert!(output.contains("call %Point @\"Point\"(i64 1, i64 2)"));
+}
+
+#[test]
 fn type_system_rejects_invalid_if_conditions() {
     let source = r#"
 if 1:

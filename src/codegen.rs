@@ -7,6 +7,7 @@ pub struct Codegen {
     ir: String,
     locals: Vec<HashMap<String, (String, String)>>,
     allocas: Vec<Vec<String>>,
+    record_defs: HashMap<String, Vec<(String, String)>>,
 }
 
 impl Codegen {
@@ -17,9 +18,11 @@ impl Codegen {
             ir: String::new(),
             locals: Vec::new(),
             allocas: Vec::new(),
+            record_defs: HashMap::new(),
         }
     }
 }
+
 
 impl Default for Codegen {
     fn default() -> Self {
@@ -58,6 +61,10 @@ impl Codegen {
 
     fn current_scope(&mut self) -> &mut HashMap<String, (String, String)> {
         self.locals.last_mut().expect("scope stack must not be empty")
+    }
+
+    fn record_fields(&self, name: &str) -> Option<&Vec<(String, String)>> {
+        self.record_defs.get(name)
     }
 
     fn emit_line(&mut self, line: impl AsRef<str>) {
@@ -205,24 +212,50 @@ impl Codegen {
             }
             Expr::Call { target, args } => {
                 if let Expr::Identifier(name) = &**target {
-                    match name.as_str() {
-                        "print" => {
-                            let (arg_ty, arg_val) = self.emit_expr(&args[0])?;
-                            if arg_ty == "i8*" {
-                                self.emit_line(format!("  call i32 (i8*, ...) @printf(i8* {}, i8* null)", arg_val));
-                            } else {
-                                let (_, fmt_ptr) = self.emit_string_literal("%ld\n");
-                                self.emit_line(format!("  call i32 (i8*, ...) @printf(i8* {}, i64 {})", fmt_ptr, arg_val));
-                            }
-                            Ok(("i64".to_string(), "0".to_string()))
+                    if name == "print" {
+                        let (arg_ty, arg_val) = self.emit_expr(&args[0])?;
+                        if arg_ty == "i8*" {
+                            self.emit_line(format!("  call i32 (i8*, ...) @printf(i8* {}, i8* null)", arg_val));
+                        } else {
+                            let (_, fmt_ptr) = self.emit_string_literal("%ld\n");
+                            self.emit_line(format!("  call i32 (i8*, ...) @printf(i8* {}, i64 {})", fmt_ptr, arg_val));
                         }
-                        _ => Err(format!("Unsupported call target: {}", name)),
+                        Ok(("i64".to_string(), "0".to_string()))
+                    } else if let Some(fields) = self.record_fields(name) {
+                        if args.len() != fields.len() {
+                            return Err(format!("Record constructor '{}' expects {} arguments, got {}", name, fields.len(), args.len()));
+                        }
+                        let mut arg_pairs = Vec::new();
+                        for arg in args {
+                            let (arg_ty, arg_val) = self.emit_expr(arg)?;
+                            arg_pairs.push(format!("{} {}", arg_ty, arg_val));
+                        }
+                        let target_val = self.fresh();
+                        self.emit_line(format!("  {} = call %{} @\"{}\"({})", target_val, name, name, arg_pairs.join(", ")));
+                        Ok((format!("%{}", name), target_val))
+                    } else {
+                        Err(format!("Unsupported call target: {}", name))
                     }
                 } else {
                     Err("Unsupported call expression".to_string())
                 }
             }
-            Expr::MemberAccess { .. } | Expr::Range { .. } | Expr::List(_) | Expr::NamedArg { .. } | Expr::Map(_) | Expr::IndexAccess { .. } => {
+            Expr::MemberAccess { object, member } => {
+                let (obj_ty, obj_val) = self.emit_expr(object)?;
+                if let Some(record_name) = obj_ty.strip_prefix('%') {
+                    if let Some(fields) = self.record_fields(record_name) {
+                        if let Some((index, (_, field_type))) = fields.iter().enumerate().find(|(_, (name, _))| name == member) {
+                            let llvm_field_ty = self.type_to_llvm(field_type);
+                            let target = self.fresh();
+                            self.emit_line(format!("  {} = extractvalue {} {}, {}", target, obj_ty, obj_val, index));
+                            return Ok((llvm_field_ty, target));
+                        }
+                        return Err(format!("Record '{}' has no field named '{}'", record_name, member));
+                    }
+                }
+                Err(format!("Unsupported member access on type {}", obj_ty))
+            }
+            Expr::Range { .. } | Expr::List(_) | Expr::NamedArg { .. } | Expr::Map(_) | Expr::IndexAccess { .. } => {
                 Err("Unsupported expression construct for code generation".to_string())
             }
         }
@@ -379,6 +412,8 @@ impl Codegen {
                 Ok(())
             }
             Stmt::RecordDef { name, fields } => {
+                self.record_defs.insert(name.clone(), fields.clone());
+
                 // Define the LLVM struct type
                 let field_types: Vec<String> = fields.iter()
                     .map(|(_, ty)| self.type_to_llvm(ty))
@@ -401,7 +436,6 @@ impl Codegen {
                 
                 // Store each field
                 for (i, (_, field_type)) in fields.iter().enumerate() {
-                    let _field_ptr = self.fresh();
                     let gep = self.fresh();
                     self.emit_line(&format!("  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}", gep, name, name, struct_ptr, i));
                     self.emit_line(&format!("  store {} %arg{}, {}* {}", self.type_to_llvm(field_type), i, self.type_to_llvm(field_type), gep));
@@ -440,10 +474,11 @@ impl Codegen {
         self.enter_scope();
         let mut main_body = Vec::new();
         for stmt in &program.statements {
-            if let Stmt::FunctionDef { .. } = stmt {
-                self.emit_stmt(stmt).expect("function codegen");
-            } else {
-                main_body.push(stmt.clone());
+            match stmt {
+                Stmt::FunctionDef { .. } | Stmt::RecordDef { .. } => {
+                    self.emit_stmt(stmt).expect("function or record codegen");
+                }
+                _ => main_body.push(stmt.clone()),
             }
         }
 

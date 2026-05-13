@@ -6,6 +6,8 @@ pub use env::Environment;
 use crate::ast::{Program, Stmt, Expr, Literal};
 use crate::error::HornetError;
 use crate::stdlib;
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 
 pub struct Interpreter {
     env: Environment,
@@ -260,9 +262,25 @@ impl Interpreter {
                 self.env.define(name, constructor);
                 Ok(ControlFlow::None)
             }
-            Stmt::Use(_name) => {
-                // [[PHASE BLOCKED: module importing not yet implemented]]
-                // For now, just ignore use statements
+            Stmt::Use(module_name) => {
+                // Load and execute the module
+                let module_path = format!("{}.hn", module_name);
+                let source = std::fs::read_to_string(&module_path)
+                    .map_err(|_| HornetError::Other(format!("Could not load module '{}'", module_name)))?;
+                
+                let mut lexer = Lexer::new(&source);
+                let tokens = lexer.tokenize()
+                    .map_err(|e| HornetError::Other(format!("Lex error in module '{}': {}", module_name, e)))?;
+                
+                let mut parser = Parser::new(tokens);
+                let module_program = parser.parse()
+                    .map_err(|e| HornetError::Other(format!("Parse error in module '{}': {}", module_name, e)))?;
+                
+                // Execute the module in the current environment
+                for stmt in &module_program.statements {
+                    self.exec_stmt(stmt)?;
+                }
+                
                 Ok(ControlFlow::None)
             }
             Stmt::Expr(expr) => {

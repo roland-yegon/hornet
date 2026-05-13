@@ -1,5 +1,7 @@
 use crate::ast::{Program, Stmt, Expr, Literal};
 use crate::error::{HornetError, HornetDiagnostic};
+use crate::lexer::Lexer;
+use crate::parser::Parser;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
@@ -204,7 +206,25 @@ impl TypeSystem {
                 
                 Ok(())
             }
-            Stmt::Use(_) => Ok(()),
+            Stmt::Use(module_name) => {
+                // Load and type-check the module
+                let module_path = format!("{}.hn", module_name);
+                let source = std::fs::read_to_string(&module_path)
+                    .map_err(|_| self.type_error_simple(format!("Could not load module '{}'", module_name)))?;
+                
+                let mut lexer = Lexer::new(&source);
+                let tokens = lexer.tokenize()
+                    .map_err(|e| self.type_error_simple(format!("Lex error in module '{}': {}", module_name, e)))?;
+                
+                let mut parser = Parser::new(tokens);
+                let module_program = parser.parse()
+                    .map_err(|e| self.type_error_simple(format!("Parse error in module '{}': {}", module_name, e)))?;
+                
+                // Type-check the module
+                self.check_stmt_list(&module_program.statements)?;
+                
+                Ok(())
+            }
             Stmt::Break => Ok(()),
             Stmt::Continue => Ok(()),
             Stmt::Loop { body } => {

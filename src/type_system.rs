@@ -24,6 +24,7 @@ pub struct TypeSystem {
     scopes: Vec<HashMap<String, HornetType>>,
     // Track inferred function parameter and return types
     function_signatures: HashMap<String, (Vec<HornetType>, HornetType)>,
+    record_definitions: HashMap<String, Vec<(String, HornetType)>>,
 }
 
 impl TypeSystem {
@@ -31,6 +32,7 @@ impl TypeSystem {
         TypeSystem {
             scopes: vec![HashMap::new()],
             function_signatures: HashMap::new(),
+            record_definitions: HashMap::new(),
         }
     }
 
@@ -76,26 +78,35 @@ impl TypeSystem {
 
     fn collect_function_signatures(&mut self, statements: &[Stmt]) -> Result<(), HornetError> {
         for stmt in statements {
-            if let Stmt::FunctionDef { name, params, return_type, body: _ } = stmt {
-                let return_type = return_type.as_ref().map_or(HornetType::Unknown, |rt| {
-                    self.parse_type_name(rt)
-                });
+            match stmt {
+                Stmt::FunctionDef { name, params, return_type, .. } => {
+                    let return_type = return_type.as_ref().map_or(HornetType::Unknown, |rt| {
+                        self.parse_type_name(rt)
+                    });
 
-                let mut param_types = Vec::new();
-                for (param_name, param_type) in params {
-                    if let Some(type_name) = param_type {
-                        param_types.push(self.parse_type_name(type_name));
-                    } else {
-                        return Err(self.type_error(
-                            "Function parameter types are required",
-                            &format!("Parameter '{}' in function '{}' is missing a type annotation", param_name, name),
-                            vec![format!("Add a type annotation: {}: Int", param_name)],
-                            "hornet.dev/errors/type-annotation",
-                        ));
+                    let mut param_types = Vec::new();
+                    for (param_name, param_type) in params {
+                        if let Some(type_name) = param_type {
+                            param_types.push(self.parse_type_name(type_name));
+                        } else {
+                            return Err(self.type_error(
+                                "Function parameter types are required",
+                                &format!("Parameter '{}' in function '{}' is missing a type annotation", param_name, name),
+                                vec![format!("Add a type annotation: {}: Int", param_name)],
+                                "hornet.dev/errors/type-annotation",
+                            ));
+                        }
                     }
-                }
 
-                self.function_signatures.insert(name.clone(), (param_types, return_type));
+                    self.function_signatures.insert(name.clone(), (param_types, return_type));
+                }
+                Stmt::RecordDef { name, fields } => {
+                    let field_types = fields.iter()
+                        .map(|(field_name, field_type)| (field_name.clone(), self.parse_type_name(field_type)))
+                        .collect();
+                    self.record_definitions.insert(name.clone(), field_types);
+                }
+                _ => {}
             }
         }
         Ok(())
@@ -194,16 +205,18 @@ impl TypeSystem {
                 }
                 Ok(())
             },
-            Stmt::RecordDef { name, fields: _ } => {
+            Stmt::RecordDef { name, fields } => {
                 // Register the record type
                 let record_type = HornetType::Custom(name.clone());
                 self.current_scope().insert(name.clone(), record_type.clone());
-                
-                // Also register the constructor as a function that returns the record type
-                let param_types = vec![HornetType::Int; 2]; // Placeholder - should be actual field types
+
+                // Register the constructor signature with real field types
+                let param_types: Vec<HornetType> = fields.iter()
+                    .map(|(_, ty)| self.parse_type_name(ty))
+                    .collect();
                 let constructor_type = HornetType::Function(param_types, Box::new(record_type));
                 self.current_scope().insert(name.clone(), constructor_type);
-                
+
                 Ok(())
             }
             Stmt::Use(module_name) => {
@@ -525,6 +538,32 @@ impl TypeSystem {
                                 Ok(HornetType::Unit)
                             }
                             _ => {
+                                if let Some(fields) = self.record_definitions.get(name) {
+                                    if fields.len() != args.len() {
+                                        return Err(self.type_error_simple(format!(
+                                            "Record '{}' expects {} arguments, got {}",
+                                            name,
+                                            fields.len(),
+                                            args.len()
+                                        )));
+                                    }
+                                    let expected_types: Vec<HornetType> = fields.iter().map(|(_, ty)| ty.clone()).collect();
+                                    for (i, arg) in args.iter().enumerate() {
+                                        let arg_type = self.check_expr(arg)?;
+                                        let expected_type = &expected_types[i];
+                                        if *expected_type != HornetType::Unknown && arg_type != *expected_type {
+                                            return Err(self.type_error_simple(format!(
+                                                "Argument {} type mismatch for record '{}': expected {:?}, got {:?}",
+                                                i + 1,
+                                                name,
+                                                expected_type,
+                                                arg_type
+                                            )));
+                                        }
+                                    }
+                                    return Ok(HornetType::Custom(name.clone()));
+                                }
+
                                 // User-defined function call
                                 let func_type = self.check_expr(target)?;
                                 if let HornetType::Function(param_types, return_type) = func_type {
@@ -556,17 +595,18 @@ impl TypeSystem {
                     Expr::MemberAccess { object, member } => {
                         let obj_type = self.check_expr(object)?;
                         match obj_type {
-                            HornetType::Custom(_record_name) => {
-                                // For now, assume all field accesses are valid and return Int
-                                // TODO: Track actual field types
-                                Ok(HornetType::Int)
+                            HornetType::Custom(record_name) => {
+                                if let Some(fields) = self.record_definitions.get(&record_name) {
+                                    if let Some((_, field_type)) = fields.iter().find(|(name, _)| name == member) {
+                                        return Ok(field_type.clone());
+                                    }
+                                    return Err(self.type_error_simple(format!("Record '{}' has no field named '{}'", record_name, member)));
+                                }
+                                Err(self.type_error_simple(format!("Unknown record type '{}'", record_name)))
                             }
                             _ => {
-                                // Method call: check the object and return a type based on the method
-                                match member.as_str() {
-                                    "str" => Ok(HornetType::String),
-                                    _ => Err(self.type_error_simple(format!("Unknown method '{}' on type {:?}", member, obj_type))),
-                                }
+                                // Member access on another value type is unsupported here
+                                Err(self.type_error_simple(format!("Unsupported member access '{}' on type {:?}", member, obj_type)))
                             }
                         }
                     }
@@ -574,7 +614,21 @@ impl TypeSystem {
                 }
             }
             Expr::Range { .. } => Ok(HornetType::Custom("Range".into())),
-            Expr::MemberAccess { .. } => Ok(HornetType::Custom("Member".into())),
+            Expr::MemberAccess { object, member } => {
+                let obj_type = self.check_expr(object)?;
+                match obj_type {
+                    HornetType::Custom(record_name) => {
+                        if let Some(fields) = self.record_definitions.get(&record_name) {
+                            if let Some((_, field_type)) = fields.iter().find(|(name, _)| name == member) {
+                                return Ok(field_type.clone());
+                            }
+                            return Err(self.type_error_simple(format!("Record '{}' has no field named '{}'", record_name, member)));
+                        }
+                        Err(self.type_error_simple(format!("Unknown record type '{}'", record_name)))
+                    }
+                    _ => Err(self.type_error_simple(format!("Unsupported member access '{}' on type {:?}", member, obj_type))),
+                }
+            }
         }
     }
 }

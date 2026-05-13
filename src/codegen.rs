@@ -1,5 +1,6 @@
 use crate::ast::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fs;
 
 pub struct Codegen {
     next_id: usize,
@@ -8,6 +9,7 @@ pub struct Codegen {
     locals: Vec<HashMap<String, (String, String)>>,
     allocas: Vec<Vec<String>>,
     record_defs: HashMap<String, Vec<(String, String)>>,
+    imported_modules: HashSet<String>,
 }
 
 impl Codegen {
@@ -19,6 +21,7 @@ impl Codegen {
             locals: Vec::new(),
             allocas: Vec::new(),
             record_defs: HashMap::new(),
+            imported_modules: HashSet::new(),
         }
     }
 }
@@ -345,6 +348,25 @@ impl Codegen {
         }
     }
 
+    fn import_module(&mut self, module_name: &str) -> Result<(), String> {
+        if self.imported_modules.contains(module_name) {
+            return Ok(());
+        }
+        self.imported_modules.insert(module_name.to_string());
+
+        let module_path = format!("{}.hn", module_name);
+        let source = fs::read_to_string(&module_path).map_err(|e| format!("Could not load module '{}': {}", module_name, e))?;
+        let mut lexer = crate::lexer::Lexer::new(&source);
+        let tokens = lexer.tokenize().map_err(|e| format!("Lex error in module '{}': {}", module_name, e))?;
+        let mut parser = crate::parser::Parser::new(tokens);
+        let module_program = parser.parse().map_err(|e| format!("Parse error in module '{}': {}", module_name, e))?;
+
+        for module_stmt in &module_program.statements {
+            self.emit_stmt(module_stmt)?;
+        }
+        Ok(())
+    }
+
     fn emit_stmt(&mut self, stmt: &Stmt) -> Result<(), String> {
         match stmt {
             Stmt::Let { name, value } => {
@@ -419,40 +441,39 @@ impl Codegen {
                     .map(|(_, ty)| self.type_to_llvm(ty))
                     .collect();
                 self.emit_line(&format!("%{} = type {{ {} }}", name, field_types.join(", ")));
-                
+
                 // Create constructor function
                 let param_types: Vec<String> = field_types.clone();
                 let param_list: Vec<String> = param_types.iter()
                     .enumerate()
                     .map(|(i, ty)| format!("{} %arg{}", ty, i))
                     .collect();
-                
+
                 self.emit_line(&format!("define %{} @\"{}\"({}) {{", name, name, param_list.join(", ")));
                 self.enter_scope();
-                
+
                 // Allocate the struct
                 let struct_ptr = self.fresh();
                 self.emit_line(&format!("  {} = alloca %{}", struct_ptr, name));
-                
+
                 // Store each field
                 for (i, (_, field_type)) in fields.iter().enumerate() {
                     let gep = self.fresh();
                     self.emit_line(&format!("  {} = getelementptr %{}, %{}* {}, i32 0, i32 {}", gep, name, name, struct_ptr, i));
                     self.emit_line(&format!("  store {} %arg{}, {}* {}", self.type_to_llvm(field_type), i, self.type_to_llvm(field_type), gep));
                 }
-                
+
                 // Load the struct and return it
                 let result = self.fresh();
                 self.emit_line(&format!("  {} = load %{}, %{}* {}", result, name, name, struct_ptr));
                 self.emit_line(&format!("  ret %{} {}", name, result));
-                
+
                 self.exit_scope();
                 self.emit_line("}");
                 Ok(())
             }
-            Stmt::Use(_) => {
-                // [[PHASE BLOCKED: module import codegen not yet implemented]]
-                Ok(())
+            Stmt::Use(module_name) => {
+                self.import_module(module_name)
             }
             Stmt::Match { .. } => {
                 // [[PHASE BLOCKED: match codegen not yet implemented]]

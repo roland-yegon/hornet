@@ -72,6 +72,24 @@ define main():
 }
 
 #[test]
+fn type_system_rejects_record_constructor_with_wrong_field_type() {
+    let source = r#"
+record Point:
+    x: Int
+    y: Int
+
+define main():
+    p = Point(1, "two")
+"#;
+    let mut lexer = Lexer::new(source);
+    let tokens = lexer.tokenize().expect("tokenization failed");
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().expect("parsing failed");
+    let mut type_system = TypeSystem::new();
+    assert!(type_system.analyze(&program).is_err());
+}
+
+#[test]
 fn type_system_rejects_invalid_if_conditions() {
     let source = r#"
 if 1:
